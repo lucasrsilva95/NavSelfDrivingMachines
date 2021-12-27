@@ -4,6 +4,8 @@ from matplotlib import pyplot as plt
 from datetime import datetime
 from os import listdir
 import os
+import warnings
+warnings.simplefilter('ignore', np.RankWarning)
 
 def takeSecond(list):
   return list[1]
@@ -16,7 +18,7 @@ def draw_lines(img, lines, color=(0,255,255), average_lines=False):
         lines = [lines]
     for line_pair in lines:
         if line_pair is not None:
-            if average_lines:
+            if average_lines and len(line_pair[0]) > 1 and len(line_pair[1]) > 1:
                 points = np.array([(line_pair[0,0], line_pair[0,1]), (line_pair[0,2], line_pair[0,3]), 
                                 (line_pair[1,2], line_pair[1,3]), (line_pair[1,0], line_pair[1,1])])
 
@@ -29,27 +31,42 @@ def draw_lines(img, lines, color=(0,255,255), average_lines=False):
                     print("Erro")
     return imgLinhas
 
-def drawCenterPoint(img, all_x_center_points, n_points):
-    if len(all_x_center_points) == 0:
-        return img
+def drawCenterPoint(img, all_x_center_points, n_points=5):
+    '''
+    Draw the center point in a given image. the center point is the average of the last n_points. 
 
-    x = np.mean(all_x_center_points)
-    y = img.shape[0]
+    Parameters
+    ----------
+    img : Image where the point will be drawn.
+    all_x_center_points : array like
+                          array that contains all the center points calculated so far.
+    n_points : integer
+               Number of points to be considered when calculating the average of the last points in ´all_x_center_points´.
+    '''
+    if len(all_x_center_points) == 0:
+        return img, None
+    x_center = int(np.mean(all_x_center_points[-n_points:]))
+    y_center = int(0.9 * img.shape[0])
     img_with_center = cv.circle(img, 
-              center=(x,y), 
+              center=(x_center,y_center), 
               radius=0,
-              color=(255,0,0),
-              thickness=-1)
-    return img_with_center
+              color=(0,0,255),
+              thickness=8)
+    return img_with_center, x_center
 
 def calc_linhas_medias(img, linhas, aprox=40, n_lines=3):
-    # Obter as linhas medias de um conjunto de linhas
+    '''
+    Obter as linhas medias de um conjunto de linhas
+    '''
     altura = img.shape[0]
     largura = img.shape[1]
     esquerda = []
     direita = []
     linha_direita = []
     linha_esquerda = []
+    considered_left_lines = []
+    considered_rigth_lines = []
+
     for linha in linhas:
         x1, y1, x2, y2 = linha.reshape(4)
         try:
@@ -77,15 +94,17 @@ def calc_linhas_medias(img, linhas, aprox=40, n_lines=3):
         considered_left_lines = [obter_coordenadas(img, line_esq) for line_esq in esquerda[:n_lines]]
         media_valores_esquerda = np.average(esquerda[:n_lines], axis=0)
         linha_esquerda = obter_coordenadas(img, media_valores_esquerda)
+        linha_esquerda[0] += aprox
+        linha_esquerda[2] += aprox
     if len(direita) > 0:
         considered_rigth_lines = [obter_coordenadas(img, line_dir) for line_dir in direita[:n_lines]]
         media_valores_direita = np.average(direita[:n_lines], axis=0)
         linha_direita = obter_coordenadas(img, media_valores_direita)
+        linha_direita[0] -= aprox
+        linha_direita[2] -= aprox
 
-    linha_esquerda[0] += aprox
-    linha_esquerda[2] += aprox
-    linha_direita[0] -= aprox
-    linha_direita[2] -= aprox
+    
+    
     return np.array([linha_esquerda, linha_direita]), np.array([considered_left_lines, considered_rigth_lines])
 
 def obter_coordenadas(img, parametros_linha):
@@ -127,56 +146,15 @@ def detectarLinhas(img, limitesCores, blur, largIni, largFinal, alturaCorte, avg
     img_segmented[mascara == 255] = 255
 
     img_blur = cv.GaussianBlur(img_segmented, (45, 45), 0)
-    #img_blur = cv.GaussianBlur(img_filt, (75, 75), 0)
-
-    # kernel_erode = np.ones((5, 5), 'uint8')
-    # img_erode = cv.erode(img_filt, kernel_erode, iterations=2)
-    # cv.imshow("img erode", img_erode)
-
-    # kernel_dilate = np.ones((5, 10), 'uint8')
-    # img_dilate = cv.dilate(img_erode, kernel_dilate, iterations=3)
-    # cv.imshow("img dilate", img_dilate)
-
-    # img_blur = cv.medianBlur(img_filt, blur)
-    # img_blur = cv.GaussianBlur(mascaraFinal, [5,5])
-    # img_canny = cv.Canny(img_blur, 220, 220)
     img_canny = cv.Canny(img_blur.astype(np.uint8), 25, 35)
 
-
-
-    triangulo1 = np.array([(largIni, altura), (largFinal, altura), (largura/2, alturaCorte)])
-    # triangulo1 = np.array([(largIni, altura/2), (largFinal, altura/2), (largura/2, alturaCorte)])
-    triangulo2 = np.array([(int(largura/3), altura), (int(largura*2/3), altura), (int(largura/2), altura/2)])
-    retangulo = np.array([(0, altura), (largura, altura),(largura, 60), (0, 60)])
-    retangulo2 = np.array([(0, 0), (0, 200),(largura, 200), (largura, 0)])
-    
-    mascara1 = np.zeros_like(img_canny)
-    mascara2 = np.zeros_like(img_canny)
-    mascara3 = np.zeros_like(img_canny)
-    mascara4 = np.zeros_like(img_canny)
-    cv.fillPoly(mascara1, np.int32([triangulo1]), (255,255,255))
-    #plt.imshow(mascara1, cmap='gray'), plt.xticks([]), plt.yticks([]),plt.show()
-    #img_mascarada1 = cv.bitwise_and(img_canny, mascara1)
-    cv.fillPoly(mascara2, np.int32([triangulo2]), (255,255,255))
-    mascara2 = cv.bitwise_not(mascara2)
-    #plt.imshow(mascara2, cmap='gray'), plt.xticks([]), plt.yticks([]),plt.show()
-    cv.fillPoly(mascara3, np.int32([retangulo]), (255,255,255))
-    #plt.imshow(mascara3, cmap='gray'), plt.xticks([]), plt.yticks([]),plt.show()
-    cv.fillPoly(mascara4, np.int32([retangulo2]), (255,255,255))
-    #plt.imshow(mascara4, cmap='gray'), plt.xticks([]), plt.yticks([]),plt.show()
-
-    # mascaraFinal = cv.bitwise_and(cv.bitwise_and(mascara1, mascara2), cv.bitwise_and(mascara3, mascara4))
-    mascaraFinal = cv.bitwise_and(mascara1, mascara2)
-    #img_mascaradaFinal = cv.bitwise_and(img_canny, mascaraFinal)
-    img_mascaradaFinal = img_canny
-
-    lines = cv.HoughLinesP(img_mascaradaFinal, 
+    lines = cv.HoughLinesP(img_canny, 
                                 2, 
                                 np.pi / 180, 
                                 50, 
                                 np.array([]), 
-                                minLineLength=40, 
-                                maxLineGap=60)
+                                minLineLength = 40, 
+                                maxLineGap = 60)
 
     
     final_lines, considered_lines = calc_linhas_medias(img, lines)
@@ -192,8 +170,8 @@ def detectarLinhas(img, limitesCores, blur, largIni, largFinal, alturaCorte, avg
     else:
         imgWithFinalLines = cv.addWeighted(img, 0.6, imgFinalLines, 1, 1)
 
-    finalImage = drawCenterPoint(imgWithFinalLines, all_x_centers_points)
-    return finalImage, imgWithLines, final_lines, imgFinalLines, img_segmented, img_mascaradaFinal, img_canny, img_blur
+    finalImage, x_center = drawCenterPoint(imgWithFinalLines, all_x_centers_points)
+    return finalImage, imgWithLines, final_lines, imgFinalLines, img_segmented, img_canny, img_blur
 
 
 def resize_frame(frame, output_shape):
@@ -226,7 +204,10 @@ def build_panel(img_final, img_segmented=None, img_canny=None, img_with_all_line
         img1 = cv.resize(img_segmented, dsize=(0,0), fx=1/3, fy=1/3)
         img2 = cv.resize(img_canny, dsize=(0,0), fx=1/3, fy=1/3)
         img3 = cv.resize(img_with_all_lines, dsize=(0,0), fx=1/3, fy=1/3)
-        total_height = img1.shape[0]*3
+        if img1.shape[0]*3 >= img_final.shape[0]:
+            total_height = img1.shape[0]*3
+        else:
+            total_height = img_final.shape[0]
         total_width = img_final.shape[1] + img1.shape[1]
         height_segment = img1.shape[0]
         output_frame = np.zeros((total_height, total_width, 3), np.uint8)
@@ -235,7 +216,8 @@ def build_panel(img_final, img_segmented=None, img_canny=None, img_with_all_line
         output_frame[height_segment:(2*height_segment), img_final.shape[1]:, 0] = img2
         output_frame[height_segment:(2*height_segment), img_final.shape[1]:, 1] = img2
         output_frame[height_segment:(2*height_segment), img_final.shape[1]:, 2] = img2
-        output_frame[2*height_segment:, img_final.shape[1]:, :] = img3
+        output_frame[2*height_segment:2*height_segment + img3.shape[0], 
+                        img_final.shape[1]:img_final.shape[1] + img3.shape[1], :] = img3
     else:
         # img2 = cv.resize(img_canny, dsize=(0,0), fx=1/2, fy=1/2)
         # img3 = cv.resize(img_with_all_lines, dsize=(0,0), fx=1/2, fy=1/2)
@@ -262,7 +244,7 @@ def build_panel(img_final, img_segmented=None, img_canny=None, img_with_all_line
 
 
 #######  Análise Vídeo  #######
-def final_func(vid, out1, out2, fatorResize, output_shape1, output_shape2):
+def final_func(vid, out1, out2, output_shape1, output_shape2, resize_factor):
 
     imgLinhasAnterior = None
     n_avg_lines = 10
@@ -277,7 +259,7 @@ def final_func(vid, out1, out2, fatorResize, output_shape1, output_shape2):
         (sucess, frame) = vid.read()
         if not sucess:
             break
-        frame = cv.resize(frame, (int(frame.shape[1]/fatorResize),int(frame.shape[0]/fatorResize)))
+        frame = cv.resize(frame, (int(frame.shape[1]/resize_factor),int(frame.shape[0]/resize_factor)))
         altura = frame.shape[0]
         largura = frame.shape[1]
         fps = None
@@ -288,15 +270,10 @@ def final_func(vid, out1, out2, fatorResize, output_shape1, output_shape2):
         if cv.waitKey(3) & 0xFF == 27 or frame is None:
             break
         try:
-            imgComLinhas, img_with_all_lines, final_lines, imgFinalLines, img_segmented, img_mascarada, img_canny, img_blur = detectarLinhas(frame, limitesCores, blur, largIni, largFinal, alturaCorte, avg_lines, all_x_centers_points)
+            imgComLinhas, img_with_all_lines, final_lines, imgFinalLines, img_segmented, img_canny, img_blur = detectarLinhas(frame, limitesCores, blur, largIni, largFinal, alturaCorte, avg_lines, all_x_centers_points)
             imgLinhasAnterior = imgFinalLines.copy()
 
-            # imgComLinhas = detectarLinhas(frame)
-            # cv.imshow("all_lines", img_with_all_lines)
-            # cv.imshow("img_filt", img_segmented)
-            # cv.imshow("canny final", img_canny)
-            # cv.imshow("imgComLinhasMedias",imgComLinhas)
-            final_panel = build_panel(imgComLinhas, img_segmented, img_mascarada, img_with_all_lines)
+            final_panel = build_panel(imgComLinhas, img_segmented, img_canny, img_with_all_lines)
             cv.imshow("Final Panel", final_panel)
 
             out1.write(resize_frame(imgComLinhas, output_shape1))
@@ -339,30 +316,31 @@ def final_func(vid, out1, out2, fatorResize, output_shape1, output_shape2):
     vid.release()
     return
 
-fatorResize = 3
+resizing_factor = 3
 fourcc = cv.VideoWriter_fourcc(*'mp4v')
-folder = os.getcwd() + "/TG/Vídeos Castanho/Milho 1/VideosBons"
+folder = "C:/Users/zabfw3/Documents/Faculdade/TG/TG/Videos_Castanho/Milho/VideosBons"
 out1 = None
 out2 = None
 for video_path in listdir(folder):
     if not os.path.isfile(folder + "/" + video_path):
         continue
     vid = cv.VideoCapture(folder + "/" + video_path)
+
     if out1 == None:
         frame = vid.read()[1]
-        output_shape1 = (int(frame.shape[0]/fatorResize),int(frame.shape[1]/fatorResize))
-        output_shape2 = (int(frame.shape[0]/fatorResize),int((4/3)*frame.shape[1]/fatorResize))
+        output_shape1 = (int(frame.shape[0]/resizing_factor), int(frame.shape[1]/resizing_factor))
+        output_shape2 = (int(frame.shape[0]/resizing_factor), int((4/3) * frame.shape[1]/resizing_factor))
 
         date = datetime.now()
         time_stamp = date.strftime('%d-%m-%y - %H-%M')
-        path = os.getcwd() + "/generated_videos"
+        path = "C:/Users/zabfw3/Documents/Faculdade/TG/generated_videos"
         if not os.path.exists(path):
             os.mkdir(path)
         out1 = cv.VideoWriter(f'{path}/imgComLinhas ({time_stamp}).mp4',fourcc, 30, frameSize=(output_shape1[1], output_shape1[0]))
         out2 = cv.VideoWriter(f'{path}/Final_panel ({time_stamp}).mp4',fourcc, 30, frameSize=(output_shape2[1], output_shape2[0]))
 
     print(f"Vídeo: {video_path}")
-    final_func(vid, out1, out2, fatorResize, output_shape1, output_shape2)
+    final_func(vid, out1, out2, output_shape1, output_shape2, resizing_factor)
 
 out1.release()
 out2.release()

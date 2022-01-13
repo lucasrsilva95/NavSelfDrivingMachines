@@ -1,17 +1,16 @@
+import os
+from typing_extensions import final
+import warnings
+from datetime import datetime
+from os import listdir
+
+
 import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
-from datetime import datetime
-from os import listdir
-import os
-import warnings
+
 warnings.simplefilter('ignore', np.RankWarning)
 
-def takeSecond(list):
-  return list[1]
-def takeThird(list):
-  return list[2]
-  
 def calcAvgRoadSize(y_max, left_lines, right_lines, n_lines=20):
 
     dists = []
@@ -33,7 +32,7 @@ def calcAvgRoadSize(y_max, left_lines, right_lines, n_lines=20):
     else:
         return 0
 
-def calcAvgParameters(left_lines, right_lines, n_lines=20):
+def calcAvgParameters(left_lines, right_lines, n_lines=30):
     parLeftLine = [[],[]]
     parRigthLine = [[],[]]
     arr_left_lines = np.array(left_lines)[:, -n_lines:]
@@ -71,17 +70,29 @@ def draw_lines(img, lines, color=(0,255,255), average_lines=False):
             if average_lines and len(line_pair[0]) > 1 and len(line_pair[1]) > 1:
                 points = np.array([(line_pair[0,0], line_pair[0,1]), (line_pair[0,2], line_pair[0,3]), 
                                 (line_pair[1,2], line_pair[1,3]), (line_pair[1,0], line_pair[1,1])])
-
-                cv.fillPoly(imgLinhas, np.int32([points]), (255,0,0))
+                try:
+                    cv.fillPoly(imgLinhas, np.int32([points]), (255,0,0))
+                except OverflowError:
+                    return imgLinhas
             for line in line_pair:
                 if len(line) == 4:
                     x1, y1, x2, y2 = line.reshape(4)
                     cv.line(imgLinhas, (x1, y1), (x2, y2), color, 10)
-                else:
-                    print("Erro")
+                # else:
+                    # print("Erro")
     return imgLinhas
 
-def drawCenterPoint(img, all_x_center_points, n_points=5):
+def heightedAverageLine(lines):
+    result = []
+    for line in lines:
+        n = int(line[6]/10)
+        for i in range(n):
+            result.append(line)
+    avgLine = np.average(np.array(result), axis=0)
+    avgLine[0] = avgLine[0].astype(int)
+    return avgLine
+
+def drawCenterPoint(img, all_x_center_points, n_points=10):
     '''
     Draw the center point in a given image. the center point is the average of the last n_points. 
 
@@ -94,190 +105,191 @@ def drawCenterPoint(img, all_x_center_points, n_points=5):
                Number of points to be considered when calculating the average of the last points in ´all_x_center_points´.
     '''
     if len(all_x_center_points) == 0 or np.mean(all_x_center_points[-n_points:]) <= 0:
-        x_center = img.shape[1]/2
-        return img, x_center
-    x_center = int(np.mean(all_x_center_points[-n_points:]))
+        avgXCenter = img.shape[1]/2
+        return img, avgXCenter
+    avgXCenter = int(np.mean(all_x_center_points[-n_points:]))
     y_center = int(0.9 * img.shape[0])
     img_with_center = cv.circle(img, 
-              center=(x_center,y_center), 
+              center=(avgXCenter,y_center), 
               radius=0,
               color=(0,0,255),
               thickness=8)
-    return img_with_center, x_center
+    return img_with_center, avgXCenter
 
-def calc_linhas_medias(img, lines, avg_x_center, avgRoadSize, avgParameters, aprox=40, n_lines=3):
+def calc_average_lines(img, lines, avgXCenter, avgRoadSize, avgParameters, aprox=50, n_lines=3):
     '''
     Obter as linhas medias de um conjunto de linhas
     '''
     height = img.shape[0]
-    largura = img.shape[1]
-    esquerda = []
-    direita = []
-    linha_direita = []
-    linha_esquerda = []
-    considered_left_lines = []
-    considered_rigth_lines = []
+    width = img.shape[1]
+    AvgLeftLine = []
+    AvgRightLine = []
     lines_filter_right = []
     lines_filter_left = []
-
+    if avgRoadSize == 0:
+        avgRoadSize = 0.8 * width
     for line in lines:
         x1, y1, x2, y2 = line.reshape(4)
         try:
             parameters = np.polyfit((x1, x2), (y1, y2), 1)  # Retorna a inclinação e a coordenada y
-        except:
+        except OverflowError:
             pass
         # Parametros da equação da linha (y = ax + b)
         a = parameters[0]
         b = parameters[1]
 
-        dist_center = distRoadCenter(line, avg_x_center, height)
+        # if abs(a) < 0.4 or abs(a) > 8:
+        if abs(a) < 0.4:
+            # print(f"Bad line, a = {a}")
+            continue
+        if avgXCenter == 0 or avgXCenter > img.shape[1]:
+            avgXCenter = img.shape[1]/2
+        dist_center = distRoadCenter(line, avgXCenter, height)
         dist_error = avgRoadSize/2 - abs(dist_center)
-        if dist_center > 0:
+        lineSize = np.sqrt((x2 - x1)**2 + (y1 - y2)**2)
+        percDistBase = (height - y1)/height
+        # if dist_center > 0 and x1 < largura/2:
+        if x1 < avgXCenter and ((a < 0 and avgParameters[0][0] < 0) or  (a > 0 and avgParameters[0][0] > 0)):
             ang_error = abs(avgParameters[0][0] - a)
             y_error = abs(avgParameters[0][1] - b)
-            lines_filter_left.append([line, parameters, ang_error, y_error])
-        else:
+            score = (y_error/100) + ang_error*10 + abs(dist_error/40) - percDistBase*2 - lineSize/200
+            lines_filter_left.append([line, parameters, ang_error, y_error, abs(dist_error), score, lineSize])
+            
+        elif x1 > avgXCenter and ((a < 0 and avgParameters[1][0] < 0) or  (a > 0 and avgParameters[1][0] > 0)):
             ang_error = abs(avgParameters[1][0] - a)
             y_error = abs(avgParameters[1][1] - b)
-            lines_filter_right.append([line, parameters, ang_error, y_error])
-
-        
-
-        #if (a < -5 or a > 6 or (a > -0.8 and a < 0.8)):
-            #print(parametros)
-        if a < -0.8 and a > -6 and x1 < largura / 2:  # Se a inclinação for menor do que 0, a inclinação está para a esquerda, se for maior a inclinação está para a direita
-            esquerda.append((a, b))
-            
-        elif a > 0.8 and a < 6 and x1 > largura / 2:
-            direita.append((a, b))
-    
-    esquerda.sort(key=lambda line_esq: line_esq[1], reverse=True)
-    direita.sort(key=lambda line_dir: line_dir[1], reverse=False)
-    n_detected_lines = len(esquerda) + len(direita)
-
-    if len(esquerda) > 0:
-        considered_left_lines = [obter_coordenadas(img.shape[0], line_esq) for line_esq in esquerda[:n_lines]]
-        media_valores_esquerda = np.average(esquerda[:n_lines], axis=0)
-        linha_esquerda = obter_coordenadas(img.shape[0], media_valores_esquerda)
-        linha_esquerda[0] += aprox
-        linha_esquerda[2] += aprox
-    if len(direita) > 0:
-        considered_rigth_lines = [obter_coordenadas(img.shape[0], line_dir) for line_dir in direita[:n_lines]]
-        media_valores_direita = np.average(direita[:n_lines], axis=0)
-        linha_direita = obter_coordenadas(img.shape[0], media_valores_direita)
-        linha_direita[0] -= aprox
-        linha_direita[2] -= aprox
-
-    
-    imgtest = img.copy()
+            score = (y_error/100) + ang_error*10 + abs(dist_error/40) - percDistBase*2 - lineSize/200
+            lines_filter_right.append([line, parameters, ang_error, y_error, abs(dist_error), score, lineSize])
+  
     finalLeftLine = []
     finalRigthLine = []
     consideredLeftLines = []
     consideredRightLines = []
+    n_detected_lines = len(lines_filter_left) + len(lines_filter_right)
     if len(lines_filter_left) > 0:
-        lines_filter_left.sort(key=lambda line_left: line_left[2], reverse=False)    # Filtering by angle error
-        lines_filter_dist = lines_filter_left[:6]
-        lines_filter_dist.sort(key = lambda line_dist: line_dist[3], reverse=False) # Filtering by y error
+        lines_filter_left.sort(key=lambda line_left: line_left[5], reverse=False)    # Filtering by angle error
+        lines_filter_dist = lines_filter_left[:5]
+        lines_filter_dist.sort(key = lambda line_dist: line_dist[4], reverse=False) # Filtering by y error
         lines_filter_angle = lines_filter_dist[:3]
-        consideredLeftLines = [line[0].reshape(4) for line in lines_filter_angle]
-        left_lines_par = [line[1].reshape(2) for line in lines_filter_angle]
-        avgLeftLines = np.average(left_lines_par, axis=0)
+        AvgLeftLine = heightedAverageLine(lines_filter_angle)
 
-        finalLeftLine = obter_coordenadas(img.shape[0], avgLeftLines)
+        consideredLeftLines = [line[0].reshape(4) for line in lines_filter_angle]
+
+        # left_lines_par = [line[1].reshape(2) for line in lines_filter_angle]
+        # avgLeftLinesPar = np.average(left_lines_par, axis=0)
+
+        finalLeftLine = get_coordinates(img.shape[0], AvgLeftLine[1])
         finalLeftLine[0] += aprox
         finalLeftLine[2] += aprox
 
     if len(lines_filter_right) > 0:
-        lines_filter_right.sort(key=lambda line: line[2], reverse=False)
-        lines_filter_dist = lines_filter_right[:6]
-        lines_filter_dist.sort(key = lambda line: line[3], reverse=False)
+        lines_filter_right.sort(key=lambda RightLine: RightLine[5], reverse=False)
+        lines_filter_dist = lines_filter_right[:5]
+        lines_filter_dist.sort(key = lambda line: line[4], reverse=False)
         lines_filter_angle = lines_filter_dist[:3]
+        AvgRightLine = heightedAverageLine(lines_filter_angle)
         consideredRightLines = [line[0].reshape(4) for line in lines_filter_angle] 
-        rigth_lines_par = [line[1].reshape(2) for line in lines_filter_angle] 
-        avgRigthLines = np.average(rigth_lines_par, axis=0)
+        # rigth_lines_par = [line[1].reshape(2) for line in lines_filter_angle]
+        # avgRigthLinesPar = AvgRightLine[1]
 
-        finalRigthLine = obter_coordenadas(img.shape[0], avgRigthLines)
-        finalRigthLine[0] += aprox
-        finalRigthLine[2] += aprox
-
-    imgtest = draw_lines(imgtest, np.array([consideredLeftLines, consideredRightLines]))
-    cv.imshow('test', imgtest)
-    finalimgtest = draw_lines(imgtest, np.array([finalLeftLine, finalRigthLine]), average_lines=True)
-    cv.imshow('Final test', finalimgtest)
+        finalRigthLine = get_coordinates(img.shape[0], AvgRightLine[1])
+        finalRigthLine[0] -= aprox
+        finalRigthLine[2] -= aprox
 
 
-    return np.array([linha_esquerda, linha_direita]), np.array([considered_left_lines, considered_rigth_lines]), n_detected_lines
 
-def obter_coordenadas(y_max, parametros_linha):
+    return np.array([finalLeftLine, finalRigthLine]), np.array([consideredLeftLines, consideredRightLines]), n_detected_lines
+
+def get_coordinates(y_max, parametros_linha):
     # Obter as coordenadas dos pontos da linha
     # Equação da Linha (y = ax + b)
     a, b = parametros_linha
-    # y1 = img.shape[0]
     y2 = int(y_max * 0.5)  # Linha média vai até 3/5 da imagem
     x1 = int((y_max - b) / a)
     x2 = int((y2 - b) / a)
     return np.array([x1, y_max, x2, y2])
 
-# def detectarLinhas(img, limitesCores, blur, largIni, largFinal, alturaCorte, avg_lines, all_x_centers_points):
-    altura = img.shape[0]
-    largura = img.shape[1]
+def improvedSeg(img_seg, x_center, minWidth = 18):
+    img_seg_bin = cv.cvtColor(img_seg, cv.COLOR_BGR2GRAY)
+    newImgSeg = np.copy(img_seg)
+    # final_x_center = 0
+    # final_x_center = int(x_center)
+    img_x_center = int(img_seg.shape[1]/2)
 
-    img_hsv = cv.cvtColor(img, cv.COLOR_RGB2HSV)
-    # img_blur = cv.medianBlur(img_hsv, 125)
-    # img_blur = cv.GaussianBlur(img_hsv, (185,265),0)
-    
+    # if x_center > img_seg.shape[1]:
+    #     new_x_center = img_seg.shape[1] - 10
+    # elif x_center < 0:
+    #     x_center = 0
+    # else:
+    #     new_x_center = int(x_center)
+        
+    new_x_center = int(img_x_center)
+    for y in range(img_seg_bin.shape[0]-1, 0, -1):
+        line = img_seg_bin[y]
+        point_count = 0
+        x_right = 0
+        x_left = 0
+        if line[new_x_center] == 0:
+            for x in range(new_x_center, img_seg.shape[1]):
+                if line[x] == 255:
+                    if point_count == minWidth:
+                        x_right = x - minWidth
+                        newImgSeg[y, x_right:] = [255,255,255]
+                        break
+                    else:
+                        point_count += 1
+                else:
+                    point_count = 0
+            for x in range(new_x_center, 0, -1):
+                if line[x] == 255:
+                    if point_count == minWidth:
+                        x_left = x + minWidth
+                        newImgSeg[y, :x_left] = [255,255,255]
+                        break
+                    else:
+                        point_count += 1
+                else:
+                    point_count = 0
+            if img_x_center == 0:
+                img_x_center = int(x_left + (x_right - x_left)/2)
+        else:
+            # newImgSeg[y, :] = [255,255,255]
+            for i in range(1, img_seg.shape[1] - new_x_center):
+                if x_left == 0 and line[new_x_center + i] == 0:
+                    x_left = new_x_center + i
+                elif x_left > 0 and line[new_x_center + i] == 255:
+                    x_right = new_x_center + i
+                    break
+            if x_right == 0:
+                x_right = img_seg.shape[1]
+            new_x_center = int(x_left + (x_right - x_left)/2)
+            for x in range(new_x_center, img_seg.shape[1]):
+                if line[x] == 255:
+                    if point_count == minWidth:
+                        x_limit_right = x - minWidth
+                        newImgSeg[y, x_limit_right:] = [255,255,255]
+                        break
+                    else:
+                        point_count += 1
+                else:
+                    point_count = 0
+            for x in range(new_x_center, 0, -1):
+                if line[x] == 255:
+                    if point_count == minWidth:
+                        x_limit_left = x + minWidth
+                        newImgSeg[y, :x_limit_left] = [255,255,255]
+                        break
+                    else:
+                        point_count += 1
+                else:
+                    point_count = 0
+                
+    # if img_x_center == 0:
+    #     img_x_center = new_x_center             
+    return newImgSeg, img_x_center
 
-    #mascaraFinal = np.zeros(img_blur.shape[:2], dtype="uint8")   #Inicializando a mascara final
-
-    for (lower, upper) in limitesCores:
-
-        lower = np.array(lower, dtype="uint8")
-        upper = np.array(upper, dtype="uint8")
-
-        mascara = cv.inRange(img_hsv, lower, upper)
-
-        #mascaraFinal = cv.bitwise_or(mascaraFinal, mascara)
-
-    # mascaraFinal = cv.bitwise_not(mascaraFinal)
-    # res = cv.bitwise_and(img_blur, img_blur, mask=mascaraFinal)
-    # img_filt = cv.cvtColor(res, cv.COLOR_HSV2RGB)
-    img_segmented = img.copy()
-    img_segmented[mascara == 0] = 0
-    img_segmented[mascara == 255] = 255
-
-    img_blur = cv.GaussianBlur(img_segmented, (25, 55), 0)
-    img_canny = cv.Canny(img_blur.astype(np.uint8), 25, 35)
-
-    lines = cv.HoughLinesP(img_canny, 
-                                2, 
-                                np.pi / 180, 
-                                50, 
-                                np.array([]), 
-                                minLineLength = 60, 
-                                maxLineGap = 40)
-
-    
-    final_lines, considered_lines, n_detected_lines = calc_linhas_medias(img, lines, x_center)
-    imgLines = draw_lines(img, considered_lines, color=(0,255,255))
-    imgFinalLines = draw_lines(img, final_lines, color=(0,255,255), average_lines=True)
-    
-    #imgComLinhas = cv.addWeighted(img, 0.8, imgLinhas, 1, 1)  # Adicionando as linhas à imagem original
-    imgWithLines = cv.addWeighted(img, 0.6, imgLines, 1, 1)
-    if np.max(avg_lines) > 0:
-        imgLinhasAvg = draw_lines(img, avg_lines, color=(0,255,255), average_lines=True)
-        # imgComLinhas = cv.addWeighted(imgComLinhas, 0.8, imgLinhasAvg, 1, 1)  # Adicionando as linhas à imagem original
-        imgWithFinalLines = cv.addWeighted(img, 0.6, imgLinhasAvg, 1, 1)
-    else:
-        imgWithFinalLines = cv.addWeighted(img, 0.6, imgFinalLines, 1, 1)
-
-    finalImage, x_center = drawCenterPoint(imgWithFinalLines, all_x_centers_points)
-    return finalImage, imgWithLines, final_lines, imgFinalLines, img_segmented, img_canny, img_blur, n_detected_lines
-
-def detectarLinhas2(img, limitesCores, blur, largIni, largFinal, alturaCorte, avg_lines, avg_x_center, avgRoadSize, avgParameters):
-    altura = img.shape[0]
-    largura = img.shape[1]
-
-    
+def detectLines(img, limitesCores, avg_lines, avgXCenter, avgRoadSize, avgParameters):
+        
     img_blur = cv.blur(img, (19, 19))
 
     cv.imshow('Blur', img_blur)
@@ -303,35 +315,31 @@ def detectarLinhas2(img, limitesCores, blur, largIni, largFinal, alturaCorte, av
     img_segmented[mascara == 0] = 0
     img_segmented[mascara == 255] = 255
 
-    cv.imshow('img_seg', img_segmented)
-
+    img_segmented, _ = improvedSeg(img_segmented, avgXCenter)
     img_canny = cv.Canny(img_segmented, 25, 35)
-
-    cv.imshow('img_canny', img_canny)
     lines = cv.HoughLinesP(img_canny, 
                                 2, 
                                 np.pi / 180, 
                                 50, 
                                 np.array([]), 
                                 minLineLength = 20, 
-                                maxLineGap = 50)
+                                maxLineGap = 70)
 
-    
-    final_lines, considered_lines, n_detected_lines = calc_linhas_medias(img, lines, avg_x_center, avgRoadSize, avgParameters)
+    if lines is None:
+        return None, None, None, None, None, None, 0 
+
+    final_lines, considered_lines, n_detected_lines = calc_average_lines(img, lines, avgXCenter, avgRoadSize, avgParameters)
     imgLines = draw_lines(img, considered_lines, color=(0,255,255))
     imgFinalLines = draw_lines(img, final_lines, color=(0,255,255), average_lines=True)
     
-    #imgComLinhas = cv.addWeighted(img, 0.8, imgLinhas, 1, 1)  # Adicionando as linhas à imagem original
     imgWithLines = cv.addWeighted(img, 0.6, imgLines, 1, 1)
     if np.max(avg_lines) > 0:
         imgLinhasAvg = draw_lines(img, avg_lines, color=(0,255,255), average_lines=True)
-        # imgComLinhas = cv.addWeighted(imgComLinhas, 0.8, imgLinhasAvg, 1, 1)  # Adicionando as linhas à imagem original
         imgWithFinalLines = cv.addWeighted(img, 0.6, imgLinhasAvg, 1, 1)
     else:
         imgWithFinalLines = cv.addWeighted(img, 0.6, imgFinalLines, 1, 1)
 
-    # finalImage, x_center = drawCenterPoint(imgWithFinalLines, all_x_centers_points)
-    return imgWithFinalLines, imgWithLines, final_lines, imgFinalLines, img_segmented, img_canny, img_blur, n_detected_lines
+    return imgWithFinalLines, imgWithLines, final_lines, imgFinalLines, img_segmented, img_canny, n_detected_lines
 
 def resize_frame(frame, output_shape):
     '''
@@ -411,84 +419,100 @@ def build_panel(img_final, img_segmented=None, img_canny=None, img_with_all_line
     return output_frame
 
 #######  Análise Vídeo  #######
-def final_func(vid, out1, out2, output_shape1, output_shape2, resize_factor):
+def final_func(vid, out1, output_shape1, resize_factor):
 
-    imgLinhasAnterior = None
     n_avg_lines = 20
      
     avg_lines = np.zeros((2,4))
     all_left_lines = [[],[],[],[]]
     all_right_lines = [[],[],[],[]]
     all_x_centers_points = []
-    avg_x_center = 0
-    avg_angle = []
+    avgXCenter = 0
+    avg_road_sizes = []
 
     while(vid.isOpened()):
         (sucess, frame) = vid.read()
         if not sucess:
             break
         frame = cv.resize(frame, (int(frame.shape[1]/resize_factor),int(frame.shape[0]/resize_factor)))
-        largura = frame.shape[1]
-        fps = None
-        limitesCores = [([35, 0, 0], [100, 255, 255])]; blur = 65; largIni = -20; largFinal = largura + 20; alturaCorte = -50  # Parametros Vid 2
+        width = frame.shape[1]
+        limitesCores = [([35, 0, 0], [100, 255, 255])]; blur = 65; largIni = -20; largFinal = width + 20; alturaCorte = -50  # Parametros Vid 2
         # limitesCores = [([60, 70, 50], [100, 240, 240])]; blur = 51; largIni = -20; largFinal = largura + 20; alturaCorte = -50  # Parametros Vid 2
         # limitesCores = [([60, 70, 50], [100, 240, 240])]; blur = 21; largIni = 80; largFinal = largura - 80; alturaCorte = -50  # Parametros Vid 4
-        # if avg_x_center == 0:
-        #     avg_x_center = int(largura/2)
+        
         if cv.waitKey(3) & 0xFF == 27 or frame is None:
             break
-        try:
-            avgRoadSize = calcAvgRoadSize(frame.shape[0], all_left_lines, all_right_lines, n_lines=20)
-            print(f"Road Size: {avgRoadSize}")
- 
-            if len(all_left_lines[0]) > 0:
-                avgParameters = calcAvgParameters(all_left_lines, all_right_lines, n_lines=20)
-            else:
-                avgParameters = [(-1.8, 450), (1, -230)]
-            print(f"Avg Parameters: {avgParameters}")
+        
+        #try:
+        # avgRoadSize = calcAvgRoadSize(frame.shape[0], all_left_lines, all_right_lines, n_lines=20)
+        if len(avg_road_sizes) == 0:
+            avgRoadSize = 0
+        else:
+            avgRoadSize = np.average(np.array(avg_road_sizes)[-5:])
 
-            imgComLinhas, img_with_all_lines, final_lines, imgFinalLines, img_segmented, img_canny, img_blur, n_detected_lines = detectarLinhas2(frame, limitesCores, blur, largIni, largFinal, alturaCorte, avg_lines, avg_x_center, avgRoadSize, avgParameters)
-            finalImage, avg_x_center = drawCenterPoint(imgComLinhas, all_x_centers_points)
-            imgLinhasAnterior = imgFinalLines.copy()
+        if len(all_left_lines[0]) > 0 and len(all_right_lines[0]) > 0:
+            avgParameters = calcAvgParameters(all_left_lines, all_right_lines, n_lines=20)
+        else:
+            avgParameters = [(-1.8, 450), (1, -300)]
+        if avgXCenter == 0:
+            avgXCenter = int(width/2)
+        img_parameters = cv.putText(img = np.zeros((200,500)), 
+                           text = f"aLeft: {avgParameters[0][0]:.2f} / aRight: {avgParameters[1][0]:.2f}", 
+                           org = (20,30), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = 0.6,color = (255,255,255),thickness = 1,lineType = cv.LINE_AA)
+        img_parameters = cv.putText(img = img_parameters, 
+                           text = f"x_Center: {avgXCenter:.0f} / Road_Size: {avgRoadSize:.2f}", 
+                           org = (20,60), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = 0.6,color = (255,255,255),thickness = 1,lineType = cv.LINE_AA)
+        cv.imshow("Parameters", img_parameters)
+        
+        imgComLinhas, img_with_all_lines, final_lines, imgFinalLines, img_segmented, img_canny, n_detected_lines = detectLines(frame, limitesCores, avg_lines, avgXCenter, avgRoadSize, avgParameters)
+        
+        if n_detected_lines == 0:
+            continue
 
-            
+        finalImage, avgXCenter = drawCenterPoint(imgComLinhas, all_x_centers_points)
+        
+        final_panel = build_panel(finalImage, img_segmented, img_canny, img_with_all_lines, n_detected_lines, avgRoadSize)
+        cv.imshow("Final Panel", final_panel)
 
-            final_panel = build_panel(finalImage, img_segmented, img_canny, img_with_all_lines, n_detected_lines, avgRoadSize)
-            cv.imshow("Final Panel", final_panel)
+        out1.write(resize_frame(final_panel, output_shape1))
+        # out2.write(resize_frame(final_panel, output_shape2))
 
-            out1.write(resize_frame(finalImage, output_shape1))
-            #out1.write(imgComLinhas)
-            out2.write(resize_frame(final_panel, output_shape2))
+        for i, coord in enumerate(final_lines[0]):
+            if len(all_left_lines[i]) > 100:
+                all_left_lines[i].pop(0)
+            all_left_lines[i].append(coord)
+        for i, coord in enumerate(final_lines[1]):
+            if len(all_right_lines[i]) > 100:
+                all_right_lines[i].pop(0)
+            all_right_lines[i].append(coord)
 
-            for i, coord in enumerate(final_lines[0]):
-                all_left_lines[i].append(coord)
-            for i, coord in enumerate(final_lines[1]):
-                all_right_lines[i].append(coord)
+        if len(all_left_lines[0]) > 0 and len(all_right_lines[0]) > 0:
+            for i in range(4):
+                avg_lines[0,i] = np.mean(all_left_lines[i][-n_avg_lines:])
+                avg_lines[1,i] = np.mean(all_right_lines[i][-n_avg_lines:])
+            avg_lines = avg_lines.astype(int)
+            roadWidth = int(avg_lines[1,0] - avg_lines[0,0])
+            x_center = int(avg_lines[0,0] + roadWidth/2)
 
-            if len(all_left_lines[0]) > 0:
-                for i in range(4):
-                    avg_lines[0,i] = np.mean(all_left_lines[i][-n_avg_lines:])
-                    avg_lines[1,i] = np.mean(all_right_lines[i][-n_avg_lines:])
-                avg_lines = avg_lines.astype(int)
-                x_center = int(avg_lines[0,0] + (avg_lines[1,0] - avg_lines[0,0])/2)
-                all_x_centers_points.append(x_center)
+            avg_road_sizes.append(roadWidth)
+            all_x_centers_points.append(x_center)
 
-        except:
-            if imgLinhasAnterior is not None:
-                imgComLinhas = cv.addWeighted(frame, 0.6, imgFinalLines, 1, 1)  # Adicionando as linhas à imagem original
+        # except:
+        #     if imgLinhasAnterior is not None:
+        #         imgComLinhas = cv.addWeighted(frame, 0.6, imgFinalLines, 1, 1)  # Adicionando as linhas à imagem original
                 
-                #cv.imshow("imgComLinhasMedias",imgComLinhas)
-                out1.write(resize_frame(imgComLinhas, output_shape1))
-                #out1.write(imgComLinhas)
-                final_panel = build_panel(imgComLinhas)
-                out2.write(resize_frame(final_panel, output_shape2))
-            else:
-                #cv.imshow("imgComLinhasMedias",frame)
-                #out1.write(resize_frame(frame, output_shape1))
-                final_panel = build_panel(frame)
-                out2.write(resize_frame(final_panel, output_shape2))
+        #         #cv.imshow("imgComLinhasMedias",imgComLinhas)
+        #         out1.write(resize_frame(imgComLinhas, output_shape1))
+        #         #out1.write(imgComLinhas)
+        #         final_panel = build_panel(imgComLinhas)
+        #         out2.write(resize_frame(final_panel, output_shape2))
+        #     else:
+        #         #cv.imshow("imgComLinhasMedias",frame)
+        #         #out1.write(resize_frame(frame, output_shape1))
+        #         final_panel = build_panel(frame)
+        #         out2.write(resize_frame(final_panel, output_shape2))
                 
-                out1.write(frame)
+        #         out1.write(frame)
 
             # pass
         # cv.waitKey(1)
@@ -499,30 +523,32 @@ def final_func(vid, out1, out2, output_shape1, output_shape2, resize_factor):
 
 resizing_factor = 3
 fourcc = cv.VideoWriter_fourcc(*'mp4v')
-folder = "C:/Users/zabfw3/Documents/Faculdade/TG/TG/Videos_Castanho/Milho/VideosBons"
+folder_list = ["C:/Users/zabfw3/Documents/Faculdade/TG/TG/Videos_Castanho/Milho/VideosBons",
+                "C:/Users/zabfw3/Documents/Faculdade/TG/TG/Videos_Castanho/Milho/Desafios"]
 out1 = None
-out2 = None
-global frame
-for video_path in listdir(folder):
-    if not os.path.isfile(folder + "/" + video_path):
-        continue
-    vid = cv.VideoCapture(folder + "/" + video_path)
+# out2 = None
+for folder in folder_list:
+    for video_path in listdir(folder):
+        if not os.path.isfile(f"{folder}/{video_path}"):
+            continue
+        vid = cv.VideoCapture(f"{folder}/{video_path}")
 
-    if out1 == None:
-        frame = vid.read()[1]
-        output_shape1 = (int(frame.shape[0]/resizing_factor), int(frame.shape[1]/resizing_factor))
-        output_shape2 = (int(frame.shape[0]/resizing_factor), int((4/3) * frame.shape[1]/resizing_factor))
+        if out1 == None:
+            frame = vid.read()[1]
+            # output_shape1 = (int(frame.shape[0]/resizing_factor), int(frame.shape[1]/resizing_factor))
+            output_shape1 = (int(frame.shape[0]/resizing_factor), int((4/3) * frame.shape[1]/resizing_factor))
 
-        date = datetime.now()
-        time_stamp = date.strftime('%d-%m-%y - %H-%M')
-        path = "C:/Users/zabfw3/Documents/Faculdade/TG/generated_videos"
-        if not os.path.exists(path):
-            os.mkdir(path)
-        out1 = cv.VideoWriter(f'{path}/imgComLinhas ({time_stamp}).mp4',fourcc, 30, frameSize=(output_shape1[1], output_shape1[0]))
-        out2 = cv.VideoWriter(f'{path}/Final_panel ({time_stamp}).mp4',fourcc, 30, frameSize=(output_shape2[1], output_shape2[0]))
+            date = datetime.now()
+            time_stamp = date.strftime('%d-%m-%y - %H-%M')
+            path = "C:/Users/zabfw3/Documents/Faculdade/TG/generated_videos"
+            if not os.path.exists(path):
+                os.mkdir(path)
+            # out2 = cv.VideoWriter(f'{path}/imgComLinhas ({time_stamp}).mp4',fourcc, 30, frameSize=(output_shape1[1], output_shape1[0]))
+            out1 = cv.VideoWriter(f'{path}/Final_panel ({time_stamp}).mp4',fourcc, 30, frameSize=(output_shape1[1], output_shape1[0]))
 
-    print(f"Vídeo: {video_path}")
-    final_func(vid, out1, out2, output_shape1, output_shape2, resizing_factor)
+        print(f"New Video: {video_path}")
+        final_func(vid, out1,output_shape1, resizing_factor)
+    
 
 out1.release()
-out2.release()
+# out2.release()

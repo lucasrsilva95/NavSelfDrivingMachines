@@ -1,3 +1,4 @@
+from turtle import width
 import cv2 as cv
 from matplotlib import pyplot as plt
 import numpy as np
@@ -39,7 +40,6 @@ class Line:
         x1, y1, x2, y2 = np.reshape(self.coords,4)
         x = x2 - ((height - y2)/(y1 - y2))*(x2 - x1)
         
-
         return abs(x_center - x)
     
     def classification(self):
@@ -74,7 +74,7 @@ class Line:
         projLine = Line(coords, self.x_center, self.avgParameters, self.avgRoadSize, self.img)
         return projLine
 
-    def draw(self, img = None, show=False, color=(0,255,255), thickness=8):
+    def draw(self, img = None, show=False, color=(0,255,255), thickness=10):
         if img is None:
             img = self.img
         imgWithLine = img.copy()
@@ -89,11 +89,12 @@ class Line:
             plt.imshow(cv.cvtColor(imgWithLine, cv.COLOR_BGR2RGB), cmap='gray'), plt.show()
         return imgWithLine
     
-    def drawProjLine(self, img, show=False, color=(0,255,255), thickness=8):
+    def drawProjLine(self, img, show=False, color=(0,255,255), thickness=10):
         imgWithLine = self.projectToBase(newLine=True).draw(img = img, show=show, color=color, thickness=thickness)
         return imgWithLine
 
     def calcScore(self, avgParameters, avgRoadSize):
+        height, width, _ = self.img.shape
         y_error = 1000
         if self.lineType == "Left":
             ang_error = abs(avgParameters[0][0] - self.parameters[0])
@@ -103,8 +104,8 @@ class Line:
             ang_error = abs(avgParameters[1][0] - self.parameters[0])
             if self.parameters[1] != None:
                 y_error = abs(avgParameters[1][1] - self.parameters[1])
-        dist_error = abs(avgRoadSize/2 - self.distCenter)
-        self.score = self.size + self.percDistBase*100 - y_error/10 - ang_error*10 - dist_error/5
+        perc_dist_error = abs((avgRoadSize/2 - self.distCenter)/width)
+        self.score = (self.size/height)*300 + self.percDistBase*100 - (35*y_error)/height - ang_error*10 - 100*perc_dist_error
         return self.score
 
     def status(self):

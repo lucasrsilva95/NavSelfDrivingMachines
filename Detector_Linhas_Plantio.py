@@ -4,7 +4,7 @@ from turtle import left
 from typing_extensions import final
 import warnings
 from datetime import datetime
-from os import listdir
+from os import listdir, replace
 from Line import Line
 
 import cv2 as cv
@@ -12,26 +12,6 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 warnings.simplefilter('ignore', np.RankWarning)
-
-def resize_frame(frame, output_shape):
-    '''
-    Resize the frame to the output_shape, filling the empty spaces with black pixels
-    Parameters
-    ----------
-    frame: Frame that will be resized
-    output_shape: Output video shape
-    '''
-    output_shape = (output_shape[0], output_shape[1], 3)
-    output = np.zeros(output_shape, np.uint8)
-    factor = min(output_shape[0]/frame.shape[0] , output_shape[1]/frame.shape[1])
-    img_res = cv.resize(frame, dsize=(0,0), fx=factor, fy=factor)
-    x0 = int((output_shape[1] - img_res.shape[1])/2)
-    x1 = x0 + img_res.shape[1]
-    y0 = int((output_shape[0] - img_res.shape[0])/2)
-    y1 = y0 + img_res.shape[0]
-    output[y0:y1, x0:x1, :] = img_res[:]
-
-    return output
 
 def generateImages(img, x_seg, colorRange, avgFinalLines, prevRoadLimits):
     '''
@@ -41,7 +21,13 @@ def generateImages(img, x_seg, colorRange, avgFinalLines, prevRoadLimits):
     img: Source frame
     colorRange: Color range that will be used in the segmentation process
     '''
-    img_blur = cv.blur(img, (31, 31))
+    height, width, _ = img.shape
+    kernel = int(0.13*width)
+    if kernel % 2 == 0:
+        kernel += 1
+
+
+    img_blur = cv.GaussianBlur(img, (kernel, kernel), 0)
 
     img_hsv = cv.cvtColor(img_blur, cv.COLOR_RGB2HSV)
     
@@ -58,10 +44,10 @@ def generateImages(img, x_seg, colorRange, avgFinalLines, prevRoadLimits):
 
 
     # plt.imshow(img_segmented), plt.xticks([]), plt.yticks([]), plt.show()
-    # cv.imwrite("3-segmentacao_verde.png", img_segmented)
+    # cv.imwrite("segmentacao_verde.png", img_segmented)
     # img_and = cv.bitwise_and(img, img_segmented)
     # plt.imshow(img_and), plt.show()
-    # cv.imwrite("4-segmented_parts.png", img_and)
+    # cv.imwrite("segmented_parts.png", img_and)
     img_segmented, avgXSeg, detailedSeg, roadLimits = improvedSeg(img_segmented, x_seg, avgFinalLines, prevRoadLimits)
     img_canny = cv.Canny(img_segmented, 25, 35)
     
@@ -81,37 +67,11 @@ def heightedAverageLine(lines):
         for i in range(n):
             result.append(line.coords)
     avgLine = np.average(np.array(result), axis=0).astype(int)
-    # avgLine[0] = avgLine[0].astype(int)
     return avgLine
-
-def get_coordinates(height, lineParameters):
-    '''
-    Convert the line parameters to x,y coordenates. The output lines always will start from the image base and end at the center of the image
-    Parameters
-    ----------
-    height: Height of the image
-    lineParameters: Array Like
-                    Parameters from the line equation of the line that will be converted. 
-                    Line Equation: y = ax + b
-                    Parameters: [a, b]
-    '''
-    # Line equation (y = ax + b)
-    a, b = lineParameters
-    y2 = int(height * 0.5)  # The line will end at the center of the image (0.5 * Height)
-    if np.isnan(a):
-        return np.array([int(b),height,int(b),y2])
-    x = [abs(int((height - b) / a)), abs(int((y2 - b) / a))]
-    if b > 0:
-        x2 = max(x)
-        x1 = min(x)
-    else:
-        x1 = max(x)
-        x2 = min(x)
-    return np.array([x1, height, x2, y2])
 
 def draw_lines(img, lines, color=(0,255,255), average_lines=False):
     '''
-    Draw the given lines to an image, coloring the space between the lines if the ´average_lines´ are True.
+    Draw the given lines to an image, coloring the space between the lines if the `average_lines` are True.
     Parameters
     ----------
     img : Image where the lines will be drawn.
@@ -125,8 +85,6 @@ def draw_lines(img, lines, color=(0,255,255), average_lines=False):
     
     if average_lines:
         lines = [lines]
-    # if len(lines[0]) < 2:
-    #     return imgLines
     if lines is None:
         return imgWithLines
     for line_pair in lines:
@@ -156,7 +114,7 @@ def extrapolateLine(modelLine, avgPars, imgWidth, approx):
 
     return (x1,y1,x2,y2)
 
-def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParameters, badLineCout, approx=40):
+def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParameters, badLineCout, approx):
     '''
     Calculate the average lines from a array of lines.
     Parameters
@@ -178,7 +136,6 @@ def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParame
     AvgLeftLine = []
     AvgRightLine = []
 
-
     if avgRoadSize == 0:
         avgRoadSize = int(0.8 * width)
     
@@ -189,6 +146,7 @@ def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParame
             if abs(a) < 0.4:
                 continue
         newLine = Line(line, avgXCenter,avgParameters, avgRoadSize, img)
+        # newLine.draw(img, show=False)
         if newLine.lineType == "Left":
             leftLines.append(newLine)
         else:
@@ -214,7 +172,7 @@ def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParame
         AvgRightLine = heightedAverageLine(sortedRightLines[:2])
         FinalRightLine = Line(AvgRightLine, avgXCenter, avgParameters, avgRoadSize, img)
         consideredRightLines = sortedRightLines[:2]
-        for line in consideredRightLines: 
+        for line in consideredRightLines:
             imgConsLines = line.draw(imgConsLines)
         final_lines.append(FinalRightLine)
 
@@ -231,11 +189,13 @@ def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParame
             FinalRightLine = Line(maxRightLine, avgXCenter, avgParameters, avgRoadSize, img)
             final_lines.append(FinalRightLine)
     
+
+
+
     final_lines = np.array(final_lines)
     
 
     return final_lines, imgConsLines, n_detected_lines, badLineCout
-
 
 def calcAvgRoadSize(height, left_lines, right_lines, n_lines=20):
     '''
@@ -295,38 +255,38 @@ def improvedSeg(img_seg, x_seg, avgLines, roadLimits, minWidth = 8):
     minWidth: Minimum width that will be considered when detecting a road limit
     '''
     imgNewSeg = img_seg.copy()
-    height = img_seg.shape[0]
+    height, width, _ = img_seg.shape
+    minWidth = int(0.02*width)
+    distsLeftRight = np.zeros(img_seg.shape[0])
     leftRatios = []
     rightRatios = []
-    # roadLimits = np.zeros((img_seg.shape[0], 2))
-    left_limit = int(0.4*img_seg.shape[1])
-    right_limit = int(0.6*img_seg.shape[1])
+    left_limit = int(0.4*width)
+    right_limit = int(0.6*width)
     img_seg_bin = cv.cvtColor(img_seg, cv.COLOR_BGR2GRAY)
     newImgSeg = np.copy(img_seg)
     detailedSeg = img_seg.copy()
     leftDif, rightDif = (0,0)
-    limitLostLeft = False
     if x_seg == 0:
-        x_seg = int(img_seg.shape[1]/2)
+        x_seg = int(width/2)
 
-    x_left, x_right = (0, img_seg.shape[1])
-    new_x_left, new_x_right = (0, img_seg.shape[1])
+    x_left, x_right = (0, width)
+    new_x_left, new_x_right = (0, width)
     best_columns = np.argpartition(np.average(img_seg_bin[:,left_limit:right_limit], axis=0), 4)[:4]
-    minDif = img_seg.shape[1]
+    minDif = width
 
     for column in best_columns:
-        dif = abs(left_limit + column - img_seg.shape[1]/2)
+        dif = abs(left_limit + column - width/2)
         if dif < minDif:
             new_x_seg = column + left_limit
             minDif = dif
 
     x_center = new_x_seg
-    for y in range(img_seg_bin.shape[0]-1, 0, -1):
+    for y in range(height-1, 0, -1):
         detect = [False, False]
         line = img_seg_bin[y]
         point_count = 0
         if np.mean(line[int(new_x_seg-(minWidth)):new_x_seg+1]) < 255 and np.mean(line[new_x_seg:new_x_seg+(minWidth)]) < 255:
-            for x in range(new_x_seg, img_seg.shape[1]):
+            for x in range(new_x_seg, width):
                 if line[x] == 255:
                     if point_count == minWidth:
                         new_x_right = x - minWidth
@@ -346,14 +306,17 @@ def improvedSeg(img_seg, x_seg, avgLines, roadLimits, minWidth = 8):
                         point_count += 1
                 else:
                     point_count = 0
+            if new_x_seg - x_left < 20 or x_right - new_x_seg < 20:
+                new_x_seg = int(x_left + (x_right - x_left)/2)
+
+        # x_seg hit a border
         else:
-            new_x_right = img_seg.shape[1]
+            new_x_right = width
             new_x_left = 0
-            for i in range(1, img_seg.shape[1] - new_x_seg):
-                if new_x_left == 0 and new_x_right == img_seg.shape[1]:
-                    if (new_x_seg + i) <= img_seg.shape[1] and (np.mean(line[new_x_seg + i:new_x_seg + i+minWidth]) == 0):
-                        # if np.mean(line[new_x_center + i:new_x_center + i+minWidth]) == 0:
-                        # if point_count == minWidth:
+            for i in range(1, width - new_x_seg):
+                if new_x_left == 0 and new_x_right == width:
+                    if (new_x_seg + i) <= width and (np.mean(line[new_x_seg + i:new_x_seg + i+minWidth]) == 0):
+                        
                         new_x_left = new_x_seg + i
                         detect[0] = True
                     elif (new_x_seg - i) >= 0 and (np.mean(line[new_x_seg - i-minWidth:new_x_seg - i]) == 0):
@@ -366,24 +329,38 @@ def improvedSeg(img_seg, x_seg, avgLines, roadLimits, minWidth = 8):
                             new_x_right = new_x_seg + i
                             detect[1] = True
                             break
-                    elif new_x_right < img_seg.shape[1] and np.mean(line[new_x_seg - i-minWidth:new_x_seg - i]) == 255:
+                    elif new_x_right < width and np.mean(line[new_x_seg - i-minWidth:new_x_seg - i]) == 255:
                         if np.mean(line[new_x_seg - i-minWidth:new_x_seg - i]) == 255:
                             new_x_left = new_x_seg - i
                             detect[0] = True
                             break
             if not False in detect:
                 new_x_seg = int(x_left + (x_right - x_left)/2)
-            
-
-        if (x_right < img_seg.shape[1] and new_x_left > x_right) or (x_left > 0 and new_x_right < x_left) or (new_x_left == 0 and new_x_right == img_seg.shape[1]):
+             
+        if (x_right < width and new_x_left > x_right) or (x_left > 0 and new_x_right < x_left):
             newImgSeg[y, :] = [255,255,255]
             continue
         
-        imgNewSeg = cv.circle(imgNewSeg, (new_x_left, y),0,color=(255,0,0), thickness=5)
-        imgNewSeg = cv.circle(imgNewSeg, (new_x_right, y),0,color=(255,0,0), thickness=5)
+        # if y < int(0.95*height) and len(avgLines) > 0:
+        #     difError = 0.15*width
+        #     if abs(new_x_left - x_left) > difError and len(avgLines) > 0 and abs(new_x_left - (avgLines[0].pointInLine(y = y) - 30)) > 20:
+        #         # print(f"x_left: {new_x_left} -> {avgLines[0].pointInLine(y = y) - 30}")
+        #         imgNewSeg = cv.circle(imgNewSeg, (new_x_left, y),0,color=(0,0,255), thickness=5)
+        #         new_x_left = avgLines[0].pointInLine(y = y) - difError
 
-        cv.imshow('new Seg', imgNewSeg)
-        if y != img_seg_bin.shape[0]-1:
+        #         imgNewSeg = cv.circle(imgNewSeg, (new_x_left, y),0,color=(100,50,200), thickness=5)
+        #         cv.imshow('New img seg', imgNewSeg)
+                
+        #     if abs(new_x_right - x_right) > 0.1*width and len(avgLines) > 0:
+        #         # print(f"x_right: {new_x_right} -> {avgLines[1].pointInLine(y = y) + 30}")
+        #         imgNewSeg = cv.circle(imgNewSeg, (new_x_right, y),0,color=(0,0,255), thickness=5)
+        #         new_x_right = int(avgLines[1].pointInLine(y = y) + difError)
+
+        #         imgNewSeg = cv.circle(imgNewSeg, (new_x_right, y),0,color=(100,50,200), thickness=5)
+        #         cv.imshow('New img seg', imgNewSeg)
+
+
+        if y != height-1:
             leftDif = new_x_left - x_left
             rightDif = new_x_right - x_right
             leftRatios.append(leftDif)
@@ -402,12 +379,14 @@ def improvedSeg(img_seg, x_seg, avgLines, roadLimits, minWidth = 8):
 
         roadLimits[y, :] = [x_left, x_right]
         roadLimits = roadLimits.astype(int)
-                
+        if x_left > 0 and x_right < width:
+            distsLeftRight[y] = x_right - x_left
+ 
+    # cv.imshow('new Seg', imgNewSeg)
 
-    # cv.imshow('Detailed Segmentation', detailedSeg)
     return newImgSeg, x_center, detailedSeg, roadLimits
 
-def build_panel(FinalImages, n_detected_lines = 0, avgXCenter = 0, road_size = 0, video_path = None, angsDegree = [0,0]):
+def build_panel(FinalImages):
     '''
     Build a panel containing the most important images [Final image, Image with all the considered lines, Segmented image, Blured image]
     Parameters
@@ -429,25 +408,13 @@ def build_panel(FinalImages, n_detected_lines = 0, avgXCenter = 0, road_size = 0
     # plt.imshow(cv.cvtColor(img_canny, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
     # plt.imshow(cv.cvtColor(imgConsideredLines, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
     # plt.imshow(cv.cvtColor(Final_img, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
-    # cv.imwrite("2-img_blur.png", img_blur)
-    # cv.imwrite("5-detailed_seg.png", imgDetailedSeg)
-    # cv.imwrite("6-road_segmented.png", img_segmented)
-    # cv.imwrite("7-img_canny.png", img_canny)
-    # cv.imwrite("9-considered_lines.png", imgConsideredLines)
-    # cv.imwrite("10-final_lines.png", Final_img)
+    # cv.imwrite("img_blur.png", img_blur)
+    # cv.imwrite("detailed_seg.png", imgDetailedSeg)
+    # cv.imwrite("road_segmented.png", img_segmented)
+    # cv.imwrite("img_canny.png", img_canny)
+    # cv.imwrite("considered_lines.png", imgConsideredLines)
+    # cv.imwrite("final_lines.png", Final_img)
 
-    Final_img = cv.putText(img = Final_img,
-                           text = f"Lines: {n_detected_lines:2d} - X center: {avgXCenter:.0f}", 
-                           org = (20,20), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = 0.5, color = (255,255,255), thickness = 1, lineType = cv.LINE_AA)
-    Final_img = cv.putText(img = Final_img,
-                           text = f"Angs: {angsDegree[0]:.1f}/{angsDegree[1]:.1f}", 
-                           org = (20,40), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = 0.5, color = (255,255,255), thickness = 1, lineType = cv.LINE_AA)
-    Final_img = cv.putText(img = Final_img,
-                           text = f"Road Size: {road_size:.0f}px", 
-                           org = (20,60), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = 0.5, color = (255,255,255), thickness = 1, lineType = cv.LINE_AA)
-    Final_img = cv.putText(img = Final_img,
-                           text = f"Vid: {video_path}", 
-                           org = (20,80), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = 0.5, color = (255,255,255), thickness = 1, lineType = cv.LINE_AA)
     
     if img_segmented is None:
         img_segmented = np.zeros((Final_img.shape[0], Final_img.shape[1], 3), np.uint8)
@@ -458,41 +425,47 @@ def build_panel(FinalImages, n_detected_lines = 0, avgXCenter = 0, road_size = 0
 
     #Horizontal video
     if Final_img.shape[1] > Final_img.shape[0]:
-        img2 = cv.resize(img_segmented, dsize=(0,0), fx=1/3, fy=1/3)
-        img1 = cv.resize(imgDetailedSeg, dsize=(0,0), fx=1/3, fy=1/3)
-        img3 = cv.resize(imgConsideredLines, dsize=(0,0), fx=1/3, fy=1/3)
-        if img1.shape[0]*3 >= Final_img.shape[0]:
-            total_height = img1.shape[0]*3
-        else:
-            total_height = Final_img.shape[0]
-        total_width = Final_img.shape[1] + img1.shape[1]
-        height_segment = img1.shape[0]
+
+        height_segment = int(Final_img.shape[0]/4)
+        width_segment = int(Final_img.shape[1]/4)
+
+        img1 = cv.resize(img_blur, dsize=(width_segment,height_segment))
+        img2 = cv.resize(imgDetailedSeg, dsize=(width_segment,height_segment))
+        img3 = cv.resize(img_segmented, dsize=(width_segment,height_segment))
+        img4 = cv.resize(imgConsideredLines, dsize=(width_segment,height_segment))
+        # img4 = cv.resize(imgConsideredLines, dsize=(0,0), fx=1/4, fy=1/4)
+
+        total_height = max(Final_img.shape[0], 4*height_segment)
+        total_width = Final_img.shape[1] + width_segment
         output_frame = np.zeros((total_height, total_width, 3), np.uint8)
+
         output_frame[:Final_img.shape[0], :Final_img.shape[1], :] = Final_img
         output_frame[:height_segment, Final_img.shape[1]:, :] = img1
         output_frame[height_segment:(2*height_segment), Final_img.shape[1]:, :] = img2
-        output_frame[2*height_segment:2*height_segment + img3.shape[0], 
-                        Final_img.shape[1]:Final_img.shape[1] + img3.shape[1], :] = img3
+        output_frame[(2*height_segment):(3*height_segment), Final_img.shape[1]:, :] = img3
+        output_frame[(3*height_segment):(4*height_segment), Final_img.shape[1]:, :] = img4
     else:
-        img1 = imgConsideredLines
-        img3 = imgDetailedSeg
-        img2 = img_segmented
+        img1 = Final_img
+        img2 = imgConsideredLines
+        img3 = img_segmented
+        img4_1 = cv.resize(img_blur, dsize=(0,0), fx=1/2, fy=1/2)
+        img4_2 = cv.resize(imgDetailedSeg, dsize=(0,0), fx=1/2, fy=1/2)
         total_height = img1.shape[0]
 
-        total_width = 4 * Final_img.shape[1]
-        height_segment = img2.shape[0]
+        total_width = 3 * Final_img.shape[1] + img4_1.shape[1]
+        height_segment = int(img2.shape[0]/2)
 
         output_frame = np.zeros((total_height, total_width, 3), np.uint8)
-        output_frame[:, :Final_img.shape[1], :] = Final_img
-        output_frame[:, Final_img.shape[1]:2*Final_img.shape[1], :] = img1
+        output_frame[:, :Final_img.shape[1], :] = img1
+        output_frame[:, Final_img.shape[1]:2*Final_img.shape[1], :] = img2
+        output_frame[:, 2*Final_img.shape[1]:3*Final_img.shape[1], :] = img3
 
-        output_frame[:, 2*Final_img.shape[1]:3*Final_img.shape[1], :] = img2
-
-        output_frame[:, 3*Final_img.shape[1]:, :] = img3
+        output_frame[:height_segment, 3*Final_img.shape[1]:3*Final_img.shape[1]+img4_1.shape[1], :] = img4_1
+        output_frame[height_segment:height_segment+img4_2.shape[0], 3*Final_img.shape[1]:3*Final_img.shape[1]+img4_2.shape[1], :] = img4_2
 
     return output_frame
 
-def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_lines = 40, approx=40):
+def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_lines = 20):
     '''
     Function that will detect the left and right limits of the road in a video
     Parameters
@@ -513,8 +486,8 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
     x_seg = 0
     avgFinalLines = []
     avgXCenter = 0
+    avgParameters = [(-1, 400), (1, -400)]    #360p
     road_sizes = []
-    avgParameters = [(-1, 400), (1, -400)]
     colorRange = [([35, 0, 0], [100, 255, 255])]  # Defining the HSV color range that will be used in the color segmentation process
     badLineCout = [0,0]
     roadLimits = [0]
@@ -522,9 +495,18 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
         (sucess, frame) = vid.read()
         if not sucess:
             break
-        frame = cv.resize(frame, (int(frame.shape[1]/resize_factor),int(frame.shape[0]/resize_factor)))
-        width = frame.shape[1]
-                
+        # frame = cv.resize(frame, (int(frame.shape[1]/resize_factor),int(frame.shape[0]/resize_factor)))
+        frame = cv.resize(frame, dsize=(0,0), fx=1/resize_factor, fy=1/resize_factor)
+        height, width, _ = frame.shape
+        
+        if min(height, width) < 600:
+            # avgParameters = [(-1, 400), (1, -400)]    #360p
+            thickness = 2; fontScale = 0.6; origin, interval = (20,20)
+        else:
+            # avgParameters = [(-1, 2000), (1, -2000)]    #720p
+            thickness = 2; fontScale = 1; origin, interval = (40,40)
+            
+        approx = int(width/15)
         if cv.waitKey(3) & 0xFF == 27 or frame is None:
             break
         
@@ -545,8 +527,8 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
                                 np.pi / 180, 
                                 50, 
                                 np.array([]), 
-                                minLineLength = 15, 
-                                maxLineGap =40)
+                                minLineLength = int(height/18),
+                                maxLineGap = int(height/6))
 
         if lines is None:
             continue
@@ -554,12 +536,13 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
         imgAllLines = draw_lines(frame, lines, color=(0,255,255))
         cv.imshow('all_lines', imgAllLines)
 
-        # cv.imwrite("8-img_all_lines.png", imgAllLines)
-        # cv.imwrite("1-img_original.png", frame)
+        # cv.imwrite("img_all_lines.png", imgAllLines)
+        # cv.imwrite("img_original.png", frame)
         
         # plt.imshow(cv.cvtColor(imgAllLines, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
 
-        final_lines, imgConsideredLines, n_detected_lines, badLineCout = calc_average_lines(frame, lines, avg_lines_coords, avgXCenter, avgRoadSize, avgParameters, badLineCout)
+        final_lines, imgConsideredLines, n_detected_lines, badLineCout = calc_average_lines(frame, lines, avg_lines_coords, avgXCenter, 
+                                                                                            avgRoadSize, avgParameters, badLineCout, approx = approx)
         
         if n_detected_lines == 0:
             continue
@@ -634,7 +617,7 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
               center=(avgXCenter,y_center), 
               radius=0,
               color=(0,0,255),
-              thickness=8)
+              thickness=10)
         
         FinalImages = [finalImg, imgConsideredLines, img_canny, img_segmented, img_blur, detailedSeg]
 
@@ -654,20 +637,36 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
         if not np.isnan(avgParameters[1]).any():
             angDegreeRight = avgParameters[1][0] * (180/np.pi)
         
-
-        final_panel = build_panel(FinalImages, n_detected_lines, avgXCenter, avgRoadSize, video_path, [angDegreeLeft, angDegreeRight])
-        cv.imshow("Final Panel", final_panel)
-
-        out1.write(resize_frame(final_panel, output_shape1))
+        final_panel = build_panel(FinalImages)
+        img_resize = cv.resize(final_panel, dsize=output_shape1)
+        Final_img = cv.putText(img = img_resize,
+                           text = f"Lines: {n_detected_lines:2d} - X center: {avgXCenter:.0f}", 
+                           org = (origin,origin), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = thickness, lineType = cv.FILLED)
+        Final_img = cv.putText(img = img_resize,
+                            text = f"Angs: {angDegreeLeft:.1f}/{angDegreeRight:.1f}", 
+                            org = (origin,origin+interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = thickness, lineType = cv.FILLED)
+        Final_img = cv.putText(img = img_resize,
+                            text = f"Road Size: {avgRoadSize:.0f}px", 
+                            org = (origin,origin+2*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = thickness, lineType = cv.FILLED)
+        Final_img = cv.putText(img = img_resize,
+                            text = f"Vid: {video_path[:-4]}", 
+                            org = (origin,origin+3*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = thickness, lineType = cv.FILLED)
+    
+        cv.imshow("Final Image", Final_img)
+        out1.write(Final_img)
 
         
     cv.destroyAllWindows()
     vid.release()
     return
 
-resizing_factor = 4 # Video reducing factor
+# 720p: 1.5
+# 480p: 2.25
+# 360p: 3
+# 270p: 4
+resizing_factor = 1.5 # Video reducing factor
 fourcc = cv.VideoWriter_fourcc(*'mp4v')
-folder_path = "C:/Users/zabfw3/Documents/Faculdade/TG/TG/Videos_Castanho/Milho"  # Folder where the source videos are located
+folder_path = "C:/Users/zabfw3/Documents/Faculdade/TG/TG/Videos_Castanho/Milho/Desafios"  # Folder where the source videos are located
 folder = folder_path.split("/")[-1]
 out1 = None
 # out2 = Nonefolder_path
@@ -678,18 +677,14 @@ for video_path in listdir(folder_path):
 
     if out1 == None:
         frame = vid.read()[1]
-        output_shape1 = (270,640)
-        # output_shape1 = (int(frame.shape[0]/resizing_factor), int((4) * frame.shape[1]/resizing_factor))  # Defining the output video shape
-        # output_shape2 = (int(frame.shape[0]/resizing_factor), int(frame.shape[1]/resizing_factor))
-
-        # plt.imshow(cv.cvtColor(frame, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
-
+        output_shape1 = (int(frame.shape[1]/resizing_factor), int(frame.shape[0]//resizing_factor))
+       
         date = datetime.now()
         time_stamp = date.strftime('%d-%m-%y - %H-%M')
         path = "C:/Users/zabfw3/Documents/Faculdade/TG/generated_videos"
         if not os.path.exists(path):
             os.mkdir(path)
-        out1 = cv.VideoWriter(f'{path}/Final_panel ({time_stamp}) ({folder}).mp4',fourcc, 30, frameSize=(output_shape1[1], output_shape1[0]))
+        out1 = cv.VideoWriter(f'{path}/Final_panel ({time_stamp}) ({folder}).mp4',fourcc, 30, frameSize=output_shape1)
         # out2= cv.VideoWriter(f'{path}/Detailed Segmentation ({time_stamp}).mp4',fourcc, 30, frameSize=(output_shape2[1], output_shape2[0]))
 
     print(f"New Video: {video_path}")

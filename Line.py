@@ -74,7 +74,7 @@ class Line:
         projLine = Line(coords, self.x_center, self.avgParameters, self.avgRoadSize, self.img)
         return projLine
 
-    def draw(self, img = None, show=False, color=(0,255,255), thickness=10):
+    def draw(self, img = None, show=False, color=(0,255,255), thickness=12):
         if img is None:
             img = self.img
         imgWithLine = img.copy()
@@ -89,7 +89,7 @@ class Line:
             plt.imshow(cv.cvtColor(imgWithLine, cv.COLOR_BGR2RGB), cmap='gray'), plt.show()
         return imgWithLine
     
-    def drawProjLine(self, img, show=False, color=(0,255,255), thickness=10):
+    def drawProjLine(self, img, show=False, color=(0,255,255), thickness=12):
         imgWithLine = self.projectToBase(newLine=True).draw(img = img, show=show, color=color, thickness=thickness)
         return imgWithLine
 

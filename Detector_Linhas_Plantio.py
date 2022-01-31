@@ -43,10 +43,8 @@ def generateImages(img, x_seg, colorRange, avgFinalLines, prevRoadLimits):
     img_segmented[mascara == 255] = 255
 
 
-    # plt.imshow(img_segmented), plt.xticks([]), plt.yticks([]), plt.show()
     # cv.imwrite("segmentacao_verde.png", img_segmented)
     # img_and = cv.bitwise_and(img, img_segmented)
-    # plt.imshow(img_and), plt.show()
     # cv.imwrite("segmented_parts.png", img_and)
     img_segmented, avgXSeg, detailedSeg, roadLimits = improvedSeg(img_segmented, x_seg, avgFinalLines, prevRoadLimits)
     img_canny = cv.Canny(img_segmented, 25, 35)
@@ -402,12 +400,6 @@ def build_panel(FinalImages):
     
     [Final_img, imgConsideredLines, img_canny, img_segmented, img_blur, imgDetailedSeg] = FinalImages
     
-    # plt.imshow(cv.cvtColor(img_blur, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
-    # plt.imshow(cv.cvtColor(imgDetailedSeg, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
-    # plt.imshow(cv.cvtColor(img_segmented, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
-    # plt.imshow(cv.cvtColor(img_canny, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
-    # plt.imshow(cv.cvtColor(imgConsideredLines, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
-    # plt.imshow(cv.cvtColor(Final_img, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
     # cv.imwrite("img_blur.png", img_blur)
     # cv.imwrite("detailed_seg.png", imgDetailedSeg)
     # cv.imwrite("road_segmented.png", img_segmented)
@@ -465,7 +457,7 @@ def build_panel(FinalImages):
 
     return output_frame
 
-def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_lines = 20):
+def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_frames = 50):
     '''
     Function that will detect the left and right limits of the road in a video
     Parameters
@@ -486,7 +478,19 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
     x_seg = 0
     avgFinalLines = []
     avgXCenter = 0
-    avgParameters = [(-1, 400), (1, -400)]    #360p
+    if min(output_shape1) < 400: #360p
+        avgParameters = [(-1, 400), (1, -400)]   
+        textThickness = 1; fontScale = 0.5; origin = (10,20) ; interval = 20
+        lineThickness = 8
+    elif min(output_shape1) < 600:  #480p
+        avgParameters = [(-1, 800), (1, -800)]    
+        textThickness = 2; fontScale = 0.6; origin = (20,20); interval = 20
+        lineThickness = 10
+    else:                           #720p
+        avgParameters = [(-1, 2000), (1, -2000)]    
+        textThickness = 2; fontScale = 1; origin = (20,40); interval = 40
+        lineThickness = 12
+
     road_sizes = []
     colorRange = [([35, 0, 0], [100, 255, 255])]  # Defining the HSV color range that will be used in the color segmentation process
     badLineCout = [0,0]
@@ -498,13 +502,6 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
         # frame = cv.resize(frame, (int(frame.shape[1]/resize_factor),int(frame.shape[0]/resize_factor)))
         frame = cv.resize(frame, dsize=(0,0), fx=1/resize_factor, fy=1/resize_factor)
         height, width, _ = frame.shape
-        
-        if min(height, width) < 600:
-            # avgParameters = [(-1, 400), (1, -400)]    #360p
-            thickness = 2; fontScale = 0.6; origin, interval = (20,20)
-        else:
-            # avgParameters = [(-1, 2000), (1, -2000)]    #720p
-            thickness = 2; fontScale = 1; origin, interval = (40,40)
             
         approx = int(width/15)
         if cv.waitKey(3) & 0xFF == 27 or frame is None:
@@ -539,7 +536,6 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
         # cv.imwrite("img_all_lines.png", imgAllLines)
         # cv.imwrite("img_original.png", frame)
         
-        # plt.imshow(cv.cvtColor(imgAllLines, cv.COLOR_BGR2RGB)), plt.xticks([]), plt.yticks([]), plt.show()
 
         final_lines, imgConsideredLines, n_detected_lines, badLineCout = calc_average_lines(frame, lines, avg_lines_coords, avgXCenter, 
                                                                                             avgRoadSize, avgParameters, badLineCout, approx = approx)
@@ -553,11 +549,11 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
         final_left_line = [line for line in final_lines if line.lineType == "Left"]
         final_right_line = [line for line in final_lines if line.lineType == "Right"]
         if len(final_left_line) > 0:
-            if len(all_left_lines) == n_avg_lines:
+            if len(all_left_lines) == n_avg_frames:
                 all_left_lines.pop(0)
             all_left_lines.append(final_left_line[0])
         if len(final_right_line) > 0:
-            if len(all_right_lines) == n_avg_lines:
+            if len(all_right_lines) == n_avg_frames:
                 all_right_lines.pop(0)
             all_right_lines.append(final_right_line[0])
 
@@ -571,7 +567,7 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
             avg_coords_right_line[2] -= approx
             roadWidth = int(avg_coords_right_line[2] - avg_coords_left_line[2])
             x_center = int(avg_coords_left_line[2] + roadWidth/2)
-            if len(road_sizes) > n_avg_lines:
+            if len(road_sizes) > n_avg_frames:
                 road_sizes.pop(0)
             road_sizes.append(roadWidth)
             if len(all_x_centers_points) > 10:
@@ -602,11 +598,11 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
                 pass
         if len(avgFinalLines) > 0:
             for line in avgFinalLines: 
-                imgAvgFinalLines = line.draw(imgAvgFinalLines)
+                imgAvgFinalLines = line.draw(imgAvgFinalLines, thickness=lineThickness)
             # imgAvgFinalLines = draw_lines(frame, avg_lines, color=(0,255,255), average_lines=True)
         else:
             for line in final_lines: 
-                imgAvgFinalLines = line.drawProjLine(imgAvgFinalLines)
+                imgAvgFinalLines = line.drawProjLine(imgAvgFinalLines, thickness=lineThickness)
 
         
         finalImg = cv.addWeighted(frame, 1, imgAvgFinalLines, 1, 1)
@@ -617,7 +613,7 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
               center=(avgXCenter,y_center), 
               radius=0,
               color=(0,0,255),
-              thickness=10)
+              thickness=lineThickness)
         
         FinalImages = [finalImg, imgConsideredLines, img_canny, img_segmented, img_blur, detailedSeg]
 
@@ -641,16 +637,16 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
         img_resize = cv.resize(final_panel, dsize=output_shape1)
         Final_img = cv.putText(img = img_resize,
                            text = f"Lines: {n_detected_lines:2d} - X center: {avgXCenter:.0f}", 
-                           org = (origin,origin), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = thickness, lineType = cv.FILLED)
+                           org = origin, fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
         Final_img = cv.putText(img = img_resize,
                             text = f"Angs: {angDegreeLeft:.1f}/{angDegreeRight:.1f}", 
-                            org = (origin,origin+interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = thickness, lineType = cv.FILLED)
+                            org = (origin[0],origin[1]+interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
         Final_img = cv.putText(img = img_resize,
                             text = f"Road Size: {avgRoadSize:.0f}px", 
-                            org = (origin,origin+2*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = thickness, lineType = cv.FILLED)
+                            org = (origin[0],origin[1]+2*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
         Final_img = cv.putText(img = img_resize,
-                            text = f"Vid: {video_path[:-4]}", 
-                            org = (origin,origin+3*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = thickness, lineType = cv.FILLED)
+                            text = f"Video: {video_path[:-4]}", 
+                            org = (origin[0],origin[1]+3*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
     
         cv.imshow("Final Image", Final_img)
         out1.write(Final_img)
@@ -665,8 +661,9 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
 # 360p: 3
 # 270p: 4
 resizing_factor = 1.5 # Video reducing factor
+
 fourcc = cv.VideoWriter_fourcc(*'mp4v')
-folder_path = "C:/Users/zabfw3/Documents/Faculdade/TG/TG/Videos_Castanho/Milho/Desafios"  # Folder where the source videos are located
+folder_path = "C:/Users/zabfw3/Documents/Faculdade/TG/TG/Videos_Castanho/Milho"  # Folder where the source videos are located
 folder = folder_path.split("/")[-1]
 out1 = None
 # out2 = Nonefolder_path
@@ -678,13 +675,14 @@ for video_path in listdir(folder_path):
     if out1 == None:
         frame = vid.read()[1]
         output_shape1 = (int(frame.shape[1]/resizing_factor), int(frame.shape[0]//resizing_factor))
+        output_shape1 = (max(output_shape1), min(output_shape1))
        
         date = datetime.now()
         time_stamp = date.strftime('%d-%m-%y - %H-%M')
         path = "C:/Users/zabfw3/Documents/Faculdade/TG/generated_videos"
         if not os.path.exists(path):
             os.mkdir(path)
-        out1 = cv.VideoWriter(f'{path}/Final_panel ({time_stamp}) ({folder}).mp4',fourcc, 30, frameSize=output_shape1)
+        out1 = cv.VideoWriter(f'{path}/Final_panel ({time_stamp}) ({folder}) ({min(output_shape1)}p).mp4',fourcc, 30, frameSize=output_shape1)
         # out2= cv.VideoWriter(f'{path}/Detailed Segmentation ({time_stamp}).mp4',fourcc, 30, frameSize=(output_shape2[1], output_shape2[0]))
 
     print(f"New Video: {video_path}")

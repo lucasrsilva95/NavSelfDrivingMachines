@@ -1,10 +1,7 @@
-from cmath import nan
 import os
-from turtle import left
-from typing_extensions import final
 import warnings
 from datetime import datetime
-from os import listdir, replace
+from os import listdir
 from Line import Line
 
 import cv2 as cv
@@ -41,19 +38,33 @@ def generateImages(img, x_seg, colorRange, avgFinalLines, prevRoadLimits):
     img_segmented = img.copy()
     img_segmented[mascara == 0] = 0
     img_segmented[mascara == 255] = 255
+    img_canny = cv.Canny(img_segmented, 25, 35)
+    # cv.imshow('canny all', img_canny)
+    lines = cv.HoughLinesP(img_canny, 
+                                2, 
+                                np.pi / 180, 
+                                50, 
+                                np.array([]), 
+                                minLineLength = int(height/18),
+                                maxLineGap = int(height/6))
+
+    imgAllLines = draw_lines(img, lines, color=(0,255,255))
+    # cv.imshow('img_seg_verde_all_lines', imgAllLines)
+    # cv.imwrite("img_seg_verde_all_lines.png", imgAllLines)
 
 
-    # cv.imwrite("segmentacao_verde.png", img_segmented)
+    # cv.imwrite("img_segmentacao_verde.png", img_segmented)
     # img_and = cv.bitwise_and(img, img_segmented)
-    # cv.imwrite("segmented_parts.png", img_and)
+    # cv.imwrite("img_segmented_parts.png", img_and)
+
     img_segmented, avgXSeg, detailedSeg, roadLimits = improvedSeg(img_segmented, x_seg, avgFinalLines, prevRoadLimits)
     img_canny = cv.Canny(img_segmented, 25, 35)
     
     return img_canny, img_segmented, img_blur, avgXSeg, detailedSeg, roadLimits
 
-def heightedAverageLine(lines):
+def weightedAverageLine(lines):
     '''
-    Return the average line heighting the size of the lines. The bigger lines have a larger impact on the final average line
+    Return the average line weighting the size of the lines. The bigger lines have a larger impact on the final average line
     Parameters
     ----------
     lines: Array Like
@@ -112,7 +123,7 @@ def extrapolateLine(modelLine, avgPars, imgWidth, approx):
 
     return (x1,y1,x2,y2)
 
-def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParameters, badLineCout, approx):
+def calc_average_lines(img, lines, avgXCenter, avgRoadSize, avgParameters, badLineCout, img_segmented, approx):
     '''
     Calculate the average lines from a array of lines.
     Parameters
@@ -127,6 +138,7 @@ def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParame
     aprox: Value that will be used to approximate the coordenates of the final lines to the road center.
     '''
     (height, width, _)  = img.shape
+    demoImg = img.copy()
         
     leftLines = []
     rightLines = []
@@ -142,9 +154,10 @@ def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParame
         if x1 != x2:
             a = (y2-y1)/(x2-x1)
             if abs(a) < 0.4:
+                demoImg = cv.line(demoImg, (x1,y1),(x2,y1), color=(0,0,255), thickness=10)
                 continue
         newLine = Line(line, avgXCenter,avgParameters, avgRoadSize, img)
-        # newLine.draw(img, show=False)
+
         if newLine.lineType == "Left":
             leftLines.append(newLine)
         else:
@@ -156,9 +169,17 @@ def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParame
     if len(leftLines) > 0:
         badLineCout[0] = 0
         sortedLeftLines = sorted(leftLines, key = lambda line:line.score, reverse=True)
-        AvgLeftLine = heightedAverageLine(sortedLeftLines[:2])
+
+        for line in sortedLeftLines[:-3]:
+            demoImg = line.draw(img=demoImg)
+        for line in sortedLeftLines[-3:]:
+            # demoImg = line.draw(img=demoImg, color=(0,0,255))
+            demoImg = line.draw(img=demoImg)
+        
+
+        AvgLeftLine = weightedAverageLine(sortedLeftLines[:3])
         FinalLeftLine = Line(AvgLeftLine, avgXCenter, avgParameters, avgRoadSize, img)
-        consideredLeftLines = sortedLeftLines[:2]
+        consideredLeftLines = sortedLeftLines[:3]
         for line in consideredLeftLines: 
             imgConsLines = line.draw(imgConsLines)
         final_lines.append(FinalLeftLine)
@@ -167,7 +188,17 @@ def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParame
     if len(rightLines) > 0:
         badLineCout[1] = 0
         sortedRightLines = sorted(rightLines, key = lambda line:line.score, reverse=True)
-        AvgRightLine = heightedAverageLine(sortedRightLines[:2])
+
+
+        for line in sortedRightLines[:-3]:
+            demoImg = line.draw(img=demoImg)
+        for line in sortedRightLines[-3:]:
+            demoImg = line.draw(img=demoImg)
+        
+        # cv.imshow('Demo Img', demoImg)
+        # cv.imwrite('bad_horizontal_lines.png', demoImg)
+
+        AvgRightLine = weightedAverageLine(sortedRightLines[:2])
         FinalRightLine = Line(AvgRightLine, avgXCenter, avgParameters, avgRoadSize, img)
         consideredRightLines = sortedRightLines[:2]
         for line in consideredRightLines:
@@ -190,8 +221,14 @@ def calc_average_lines(img, lines, avg_lines, avgXCenter, avgRoadSize, avgParame
 
 
 
-    final_lines = np.array(final_lines)
-    
+    # final_lines = np.array(final_lines)
+    # imgAvgLines = img.copy()
+
+    # imgAvgLines = final_lines[0].drawProjLine(imgAvgLines, thickness=7)
+    # imgAvgLines = final_lines[1].drawProjLine(imgAvgLines, thickness=7)
+
+    # cv.imshow('Average Lines', imgAvgLines)
+    # cv.imwrite('img_average_Lines.png', imgAvgLines)
 
     return final_lines, imgConsLines, n_detected_lines, badLineCout
 
@@ -339,25 +376,6 @@ def improvedSeg(img_seg, x_seg, avgLines, roadLimits, minWidth = 8):
             newImgSeg[y, :] = [255,255,255]
             continue
         
-        # if y < int(0.95*height) and len(avgLines) > 0:
-        #     difError = 0.15*width
-        #     if abs(new_x_left - x_left) > difError and len(avgLines) > 0 and abs(new_x_left - (avgLines[0].pointInLine(y = y) - 30)) > 20:
-        #         # print(f"x_left: {new_x_left} -> {avgLines[0].pointInLine(y = y) - 30}")
-        #         imgNewSeg = cv.circle(imgNewSeg, (new_x_left, y),0,color=(0,0,255), thickness=5)
-        #         new_x_left = avgLines[0].pointInLine(y = y) - difError
-
-        #         imgNewSeg = cv.circle(imgNewSeg, (new_x_left, y),0,color=(100,50,200), thickness=5)
-        #         cv.imshow('New img seg', imgNewSeg)
-                
-        #     if abs(new_x_right - x_right) > 0.1*width and len(avgLines) > 0:
-        #         # print(f"x_right: {new_x_right} -> {avgLines[1].pointInLine(y = y) + 30}")
-        #         imgNewSeg = cv.circle(imgNewSeg, (new_x_right, y),0,color=(0,0,255), thickness=5)
-        #         new_x_right = int(avgLines[1].pointInLine(y = y) + difError)
-
-        #         imgNewSeg = cv.circle(imgNewSeg, (new_x_right, y),0,color=(100,50,200), thickness=5)
-        #         cv.imshow('New img seg', imgNewSeg)
-
-
         if y != height-1:
             leftDif = new_x_left - x_left
             rightDif = new_x_right - x_right
@@ -380,11 +398,10 @@ def improvedSeg(img_seg, x_seg, avgLines, roadLimits, minWidth = 8):
         if x_left > 0 and x_right < width:
             distsLeftRight[y] = x_right - x_left
  
-    # cv.imshow('new Seg', imgNewSeg)
 
     return newImgSeg, x_center, detailedSeg, roadLimits
 
-def build_panel(FinalImages):
+def build_panel(FinalImages, gap):
     '''
     Build a panel containing the most important images [Final image, Image with all the considered lines, Segmented image, Blured image]
     Parameters
@@ -401,11 +418,11 @@ def build_panel(FinalImages):
     [Final_img, imgConsideredLines, img_canny, img_segmented, img_blur, imgDetailedSeg] = FinalImages
     
     # cv.imwrite("img_blur.png", img_blur)
-    # cv.imwrite("detailed_seg.png", imgDetailedSeg)
-    # cv.imwrite("road_segmented.png", img_segmented)
+    # cv.imwrite("img_detailed_seg.png", imgDetailedSeg)
+    # cv.imwrite("img_road_segmented.png", img_segmented)
     # cv.imwrite("img_canny.png", img_canny)
-    # cv.imwrite("considered_lines.png", imgConsideredLines)
-    # cv.imwrite("final_lines.png", Final_img)
+    # cv.imwrite("img_considered_lines.png", imgConsideredLines)
+    # cv.imwrite("img_result.png", Final_img)
 
     
     if img_segmented is None:
@@ -443,21 +460,22 @@ def build_panel(FinalImages):
         img4_1 = cv.resize(img_blur, dsize=(0,0), fx=1/2, fy=1/2)
         img4_2 = cv.resize(imgDetailedSeg, dsize=(0,0), fx=1/2, fy=1/2)
         total_height = img1.shape[0]
-
-        total_width = 3 * Final_img.shape[1] + img4_1.shape[1]
-        height_segment = int(img2.shape[0]/2)
+        h_limits = [Final_img.shape[1], 2*Final_img.shape[1] + gap, 3*Final_img.shape[1] + 2*gap, 3*Final_img.shape[1]+img4_1.shape[1] + 3*gap]
+        v_limits = [img4_1.shape[0], 2*img4_1.shape[0]]
+        total_width = 3 * Final_img.shape[1] + img4_1.shape[1] + (3 * gap)
 
         output_frame = np.zeros((total_height, total_width, 3), np.uint8)
-        output_frame[:, :Final_img.shape[1], :] = img1
-        output_frame[:, Final_img.shape[1]:2*Final_img.shape[1], :] = img2
-        output_frame[:, 2*Final_img.shape[1]:3*Final_img.shape[1], :] = img3
+        output_frame[:] = (244,220,179)    # Color of the gap between images
+        output_frame[:, :h_limits[0], :] = img1
+        output_frame[:, h_limits[0]+gap:h_limits[1], :] = img2
+        output_frame[:, h_limits[1]+gap:h_limits[2], :] = img3
 
-        output_frame[:height_segment, 3*Final_img.shape[1]:3*Final_img.shape[1]+img4_1.shape[1], :] = img4_1
-        output_frame[height_segment:height_segment+img4_2.shape[0], 3*Final_img.shape[1]:3*Final_img.shape[1]+img4_2.shape[1], :] = img4_2
+        output_frame[:v_limits[0], h_limits[2]+gap:h_limits[3], :] = img4_1
+        output_frame[v_limits[0]:v_limits[1], h_limits[2]+gap:h_limits[3], :] = img4_2
 
     return output_frame
 
-def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_frames = 50):
+def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_ratio = 30, n_avg_frames = 8):
     '''
     Function that will detect the left and right limits of the road in a video
     Parameters
@@ -467,8 +485,11 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
     output_shape1: Shape of the output video 1
     resize_factor: Factor that will be used when resizing the original frame
     video_path: Video that are being analysed
+    proc_ratio: Number of frames that will be analysed per second
     n_avg_lines: Number of average lines that will be considered when calculating the final image lines
     '''
+    
+    frame_cout = 0
     avg_lines_coords = np.zeros((2,4))
     all_left_lines = []
     all_pars_left_lines = []
@@ -495,120 +516,148 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
     colorRange = [([35, 0, 0], [100, 255, 255])]  # Defining the HSV color range that will be used in the color segmentation process
     badLineCout = [0,0]
     roadLimits = [0]
+    startVideoSecond = None
+    procRate = 0
     while(vid.isOpened()):
         (sucess, frame) = vid.read()
         if not sucess:
             break
-        # frame = cv.resize(frame, (int(frame.shape[1]/resize_factor),int(frame.shape[0]/resize_factor)))
         frame = cv.resize(frame, dsize=(0,0), fx=1/resize_factor, fy=1/resize_factor)
         height, width, _ = frame.shape
             
-        approx = int(width/15)
+        approx = int(width/25)
+        # approx = 0
         if cv.waitKey(3) & 0xFF == 27 or frame is None:
             break
-        
-        if len(road_sizes) == 0:
-            avgRoadSize = 0
-        else:
-            avgRoadSize = int(np.average(np.array(road_sizes)))
-                   
-        if avgXCenter == 0:
-            avgXCenter = int(width/2)
-        if len(roadLimits) == 1:
-            roadLimits = np.zeros((frame.shape[0], 2))
-        # Generate images
-        img_canny, img_segmented, img_blur, x_seg, detailedSeg, roadLimits = generateImages(frame, x_seg, colorRange, avgFinalLines, roadLimits)
+        if frame_cout % 30 == 0:
+            if startVideoSecond is not None:
+                timeDelta = datetime.now() - startVideoSecond
+                procRate = 30/(timeDelta.seconds + timeDelta.microseconds/1000000)
+            startVideoSecond = datetime.now()
+        if frame_cout % int(30/proc_ratio) == 0:
+            if len(road_sizes) == 0:
+                avgRoadSize = 0
+            else:
+                avgRoadSize = int(np.average(np.array(road_sizes)))
+                    
+            if avgXCenter == 0:
+                avgXCenter = int(width/2)
+            if len(roadLimits) == 1:
+                roadLimits = np.zeros((frame.shape[0], 2))
+            # Generate images
+            img_canny, img_segmented, img_blur, x_seg, detailedSeg, roadLimits = generateImages(frame, x_seg, colorRange, avgFinalLines, roadLimits)
 
-        lines = cv.HoughLinesP(img_canny, 
-                                2, 
-                                np.pi / 180, 
-                                50, 
-                                np.array([]), 
-                                minLineLength = int(height/18),
-                                maxLineGap = int(height/6))
+            lines = cv.HoughLinesP(img_canny, 
+                                    2, 
+                                    np.pi / 180, 
+                                    50, 
+                                    np.array([]), 
+                                    minLineLength = int(height/18),
+                                    maxLineGap = int(height/6))
 
-        if lines is None:
-            continue
+            if lines is None:
+                continue
 
-        imgAllLines = draw_lines(frame, lines, color=(0,255,255))
-        cv.imshow('all_lines', imgAllLines)
+            imgAllLines = draw_lines(frame, lines, color=(0,255,255))
+            # cv.imshow('all_lines', imgAllLines)
 
-        # cv.imwrite("img_all_lines.png", imgAllLines)
-        # cv.imwrite("img_original.png", frame)
-        
-
-        final_lines, imgConsideredLines, n_detected_lines, badLineCout = calc_average_lines(frame, lines, avg_lines_coords, avgXCenter, 
-                                                                                            avgRoadSize, avgParameters, badLineCout, approx = approx)
-        
-        if n_detected_lines == 0:
-            continue
-        
-        # imgConsideredLines = draw_lines(frame, considered_lines, color=(0,255,255))
-
-        # Adding the new detected lines to the list of all lines
-        final_left_line = [line for line in final_lines if line.lineType == "Left"]
-        final_right_line = [line for line in final_lines if line.lineType == "Right"]
-        if len(final_left_line) > 0:
-            if len(all_left_lines) == n_avg_frames:
-                all_left_lines.pop(0)
-            all_left_lines.append(final_left_line[0])
-        if len(final_right_line) > 0:
-            if len(all_right_lines) == n_avg_frames:
-                all_right_lines.pop(0)
-            all_right_lines.append(final_right_line[0])
-
-        # Calculating the average lines and adding the calculated road width and x center to the lists
-        if len(all_left_lines) > 0 and len(all_right_lines) > 0:
-            avg_coords_left_line = np.average([line.projCoords for line in all_left_lines], axis=0).astype(int)
-            avg_coords_right_line = np.average([line.projCoords for line in all_right_lines], axis=0).astype(int)
-            avg_coords_left_line[0] += approx
-            avg_coords_left_line[2] += approx
-            avg_coords_right_line[0] -= approx
-            avg_coords_right_line[2] -= approx
-            roadWidth = int(avg_coords_right_line[2] - avg_coords_left_line[2])
-            x_center = int(avg_coords_left_line[2] + roadWidth/2)
-            if len(road_sizes) > n_avg_frames:
-                road_sizes.pop(0)
-            road_sizes.append(roadWidth)
-            if len(all_x_centers_points) > 10:
-                all_x_centers_points.pop(0)
-            all_x_centers_points.append(x_center)
-            # all_x_centers_points.append(road_x_center)
-            avgXCenter = int(np.mean(all_x_centers_points))
-            if avgXCenter < 0:
-                avgXCenter = 0
-            elif avgXCenter > width:
-                avgXCenter = width
-            avgRoadSize = int(np.average(road_sizes))
-
-            avg_left_Line = Line(avg_coords_left_line, x_center, avgParameters, avgRoadSize, frame)
-            avg_right_Line = Line(avg_coords_right_line, x_center, avgParameters, avgRoadSize, frame)
-            avgFinalLines = [avg_left_Line, avg_right_Line]
+            # cv.imwrite("img_all_lines.png", imgAllLines)
+            # cv.imwrite("img_original.png", frame)
             
-            
-        imgAvgFinalLines = np.zeros_like(frame)
-                      
-        if len(avgFinalLines) == 2:
-            points = np.array([(avgFinalLines[0].projCoords[:2]), (avgFinalLines[0].projCoords[2:]), 
-                            (avgFinalLines[1].projCoords[2:]), (avgFinalLines[1].projCoords[:2])])
-            
-            try:
-                cv.fillPoly(imgAvgFinalLines, np.int32([points]), (255,0,0))
-            except OverflowError:
-                pass
-        if len(avgFinalLines) > 0:
-            for line in avgFinalLines: 
-                imgAvgFinalLines = line.draw(imgAvgFinalLines, thickness=lineThickness)
-            # imgAvgFinalLines = draw_lines(frame, avg_lines, color=(0,255,255), average_lines=True)
-        else:
-            for line in final_lines: 
-                imgAvgFinalLines = line.drawProjLine(imgAvgFinalLines, thickness=lineThickness)
 
+            final_lines, imgConsideredLines, n_detected_lines, badLineCout = calc_average_lines(frame, lines, avgXCenter, avgRoadSize, 
+                                                                                        avgParameters, badLineCout, img_segmented, approx = approx)
+            
+            if n_detected_lines == 0:
+                continue
+            
+            # imgConsideredLines = draw_lines(frame, considered_lines, color=(0,255,255))
+
+            # Adding the new detected lines to the list of all lines
+            final_left_line = [line for line in final_lines if line.lineType == "Left"]
+            final_right_line = [line for line in final_lines if line.lineType == "Right"]
+            if len(final_left_line) > 0:
+                if len(all_left_lines) == n_avg_frames:
+                    all_left_lines.pop(0)
+                all_left_lines.append(final_left_line[0])
+            if len(final_right_line) > 0:
+                if len(all_right_lines) == n_avg_frames:
+                    all_right_lines.pop(0)
+                all_right_lines.append(final_right_line[0])
+
+            # Calculating the average lines and adding the calculated road width and x center to the lists
+            if len(all_left_lines) > 0 and len(all_right_lines) > 0:
+                avg_coords_left_line = np.average([line.projCoords for line in all_left_lines], axis=0).astype(int)
+                avg_coords_right_line = np.average([line.projCoords for line in all_right_lines], axis=0).astype(int)
+                avg_coords_left_line[0] += approx
+                avg_coords_left_line[2] += approx
+                avg_coords_right_line[0] -= approx
+                avg_coords_right_line[2] -= approx
+                roadWidth = int(avg_coords_right_line[2] - avg_coords_left_line[2])
+                x_center = int(avg_coords_left_line[2] + roadWidth/2)
+                # if len(road_sizes) > n_avg_frames:
+                #     road_sizes.pop(0)
+                # road_sizes.append(roadWidth)
+                # if len(all_x_centers_points) > 10:
+                #     all_x_centers_points.pop(0)
+                # all_x_centers_points.append(x_center)
+                # avgXCenter = int(np.mean(all_x_centers_points))
+                # if avgXCenter < 0:
+                #     avgXCenter = 0
+                # elif avgXCenter > width:
+                #     avgXCenter = width
+                # avgRoadSize = int(np.average(road_sizes))
+
+                avgRoadSize = roadWidth
+                avg_left_Line = Line(avg_coords_left_line, x_center, avgParameters, avgRoadSize, frame)
+                avg_right_Line = Line(avg_coords_right_line, x_center, avgParameters, avgRoadSize, frame)
+                avgFinalLines = [avg_left_Line, avg_right_Line]
+                
+                
+            imgAvgFinalLines = np.zeros_like(frame)
+                        
+            if len(avgFinalLines) == 2:
+                points = np.array([(avgFinalLines[0].projCoords[:2]), (avgFinalLines[0].projCoords[2:]), 
+                                (avgFinalLines[1].projCoords[2:]), (avgFinalLines[1].projCoords[:2])])
+                
+                try:
+                    cv.fillPoly(imgAvgFinalLines, np.int32([points]), (255,0,0))
+                except OverflowError:
+                    pass
+            if len(avgFinalLines) > 0:
+                for line in avgFinalLines: 
+                    imgAvgFinalLines = line.draw(imgAvgFinalLines, thickness=lineThickness)
+            else:
+                for line in final_lines: 
+                    imgAvgFinalLines = line.drawProjLine(imgAvgFinalLines, thickness=lineThickness)
+
+
+            if len(avgFinalLines) > 0:
+                
+                if not None in avgFinalLines[0].parameters:
+                    all_pars_left_lines.append(avgFinalLines[0].parameters)
+                if not None in avgFinalLines[1].parameters:
+                    all_pars_right_lines.append(avgFinalLines[1].parameters)
+                avgParameters = calcAvgParameters(all_pars_left_lines, all_pars_right_lines, n_lines=20) # Calculating the average line parameters
+            else:
+                avgParameters = [(1.8, 450), (1, -300)]
+
+            (angDegreeLeft, angDegreeRight) = (0,0)
+            if not np.isnan(avgParameters[0]).any():
+                angDegreeLeft = avgParameters[0][0] * (180/np.pi)
+            if not np.isnan(avgParameters[1]).any():
+                angDegreeRight = avgParameters[1][0] * (180/np.pi)
         
+
         finalImg = cv.addWeighted(frame, 1, imgAvgFinalLines, 1, 1)
 
+        # cv.imwrite('img_avg_lines.png', finalImg)
+
         # Draw x center point
-        y_center = int(0.9 * frame.shape[0])
+
+        avgXCenter = x_center
+
+        y_center = int(0.95 * frame.shape[0])
         finalImg = cv.circle(finalImg, 
               center=(avgXCenter,y_center), 
               radius=0,
@@ -617,23 +666,7 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
         
         FinalImages = [finalImg, imgConsideredLines, img_canny, img_segmented, img_blur, detailedSeg]
 
-        if len(avgFinalLines) > 0:
-            
-            if not None in avgFinalLines[0].parameters:
-                all_pars_left_lines.append(avgFinalLines[0].parameters)
-            if not None in avgFinalLines[1].parameters:
-                all_pars_right_lines.append(avgFinalLines[1].parameters)
-            avgParameters = calcAvgParameters(all_pars_left_lines, all_pars_right_lines, n_lines=20) # Calculating the average line parameters
-        else:
-            avgParameters = [(1.8, 450), (1, -300)]
-
-        (angDegreeLeft, angDegreeRight) = (0,0)
-        if not np.isnan(avgParameters[0]).any():
-            angDegreeLeft = avgParameters[0][0] * (180/np.pi)
-        if not np.isnan(avgParameters[1]).any():
-            angDegreeRight = avgParameters[1][0] * (180/np.pi)
-        
-        final_panel = build_panel(FinalImages)
+        final_panel = build_panel(FinalImages, gap = int(0.015*width))
         img_resize = cv.resize(final_panel, dsize=output_shape1)
         Final_img = cv.putText(img = img_resize,
                            text = f"Lines: {n_detected_lines:2d} - X center: {avgXCenter:.0f}", 
@@ -647,9 +680,14 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
         Final_img = cv.putText(img = img_resize,
                             text = f"Video: {video_path[:-4]}", 
                             org = (origin[0],origin[1]+3*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
+        Final_img = cv.putText(img = img_resize,
+                            text = f"Proc: {procRate:.1f} fps", 
+                            org = (origin[0],origin[1]+4*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
     
         cv.imshow("Final Image", Final_img)
         out1.write(Final_img)
+
+        frame_cout += 1
 
         
     cv.destroyAllWindows()
@@ -660,13 +698,13 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, n_avg_
 # 480p: 2.25
 # 360p: 3
 # 270p: 4
-resizing_factor = 1.5 # Video reducing factor
+resizing_factor = 3 # Video reducing factor
+proc_ratio = 6  #Number of frames to be analysed per second (max 30)
 
 fourcc = cv.VideoWriter_fourcc(*'mp4v')
 folder_path = "C:/Users/zabfw3/Documents/Faculdade/TG/TG/Videos_Castanho/Milho"  # Folder where the source videos are located
 folder = folder_path.split("/")[-1]
 out1 = None
-# out2 = Nonefolder_path
 for video_path in listdir(folder_path):
     if not os.path.isfile(f"{folder_path}/{video_path}"):
         continue
@@ -677,16 +715,18 @@ for video_path in listdir(folder_path):
         output_shape1 = (int(frame.shape[1]/resizing_factor), int(frame.shape[0]//resizing_factor))
         output_shape1 = (max(output_shape1), min(output_shape1))
        
-        date = datetime.now()
-        time_stamp = date.strftime('%d-%m-%y - %H-%M')
+        date_start = datetime.now()
+        time_stamp = date_start.strftime('%d-%m-%y - %H-%M')
         path = "C:/Users/zabfw3/Documents/Faculdade/TG/generated_videos"
         if not os.path.exists(path):
             os.mkdir(path)
-        out1 = cv.VideoWriter(f'{path}/Final_panel ({time_stamp}) ({folder}) ({min(output_shape1)}p).mp4',fourcc, 30, frameSize=output_shape1)
-        # out2= cv.VideoWriter(f'{path}/Detailed Segmentation ({time_stamp}).mp4',fourcc, 30, frameSize=(output_shape2[1], output_shape2[0]))
+        out1 = cv.VideoWriter(f'{path}/Final_panel ({time_stamp}) ({folder}) ({min(output_shape1)}p) ({proc_ratio}fps).mp4',fourcc, 30, frameSize=output_shape1)
 
     print(f"New Video: {video_path}")
-    detectRoadLimits(vid, out1, output_shape1, resizing_factor, video_path)
-        
+    detectRoadLimits(vid, out1, output_shape1, resizing_factor, video_path, proc_ratio, n_avg_frames=int(1.7*proc_ratio))
 
 out1.release()
+
+date_end = datetime.now()
+totalTime = date_end - date_start
+print(f"Tempo de execução: {totalTime.seconds//60} min e {totalTime.seconds%60}s")

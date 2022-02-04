@@ -17,7 +17,7 @@ class Line:
       self.img = img
 
       self.parameters, self.size = self.getInitAttributes()
-      self.distCenter = self.calcDistRoadCenter(x_center)
+      self.distCenter = abs(x_center - self.projectToBase()[2])
       self.projCoords = self.projectToBase()
       self.lineType = self.classification()
       self.percDistBase = self.coords[3]/self.img.shape[0]
@@ -34,13 +34,6 @@ class Line:
             pars = (1.5708, -10000) 
         size = np.sqrt((x1-x2)**2 + (y1-y2)**2)
         return pars, size
-
-    def calcDistRoadCenter(self, x_center):
-        height = self.img.shape[0]
-        x1, y1, x2, y2 = np.reshape(self.coords,4)
-        x = x2 - ((height - y2)/(y1 - y2))*(x2 - x1)
-        
-        return abs(x_center - x)
     
     def classification(self):
         if self.projCoords[2] < self.x_center:
@@ -74,7 +67,7 @@ class Line:
         projLine = Line(coords, self.x_center, self.avgParameters, self.avgRoadSize, self.img)
         return projLine
 
-    def draw(self, img = None, show=False, color=(0,255,255), thickness=12):
+    def draw(self, img = None, show=False, color=(0,255,255), thickness=10):
         if img is None:
             img = self.img
         imgWithLine = img.copy()
@@ -86,7 +79,7 @@ class Line:
         # imgWithLine = cv.addWeighted(img, 0.6, imgWithLine, 1, 1)
         
         if show:
-            plt.imshow(cv.cvtColor(imgWithLine, cv.COLOR_BGR2RGB), cmap='gray'), plt.show()
+            cv.imshow('line', imgWithLine)
         return imgWithLine
     
     def drawProjLine(self, img, show=False, color=(0,255,255), thickness=12):
@@ -105,7 +98,7 @@ class Line:
             if self.parameters[1] != None:
                 y_error = abs(avgParameters[1][1] - self.parameters[1])
         perc_dist_error = abs((avgRoadSize/2 - self.distCenter)/width)
-        self.score = (self.size/height)*300 + self.percDistBase*100 - (35*y_error)/height - ang_error*10 - 100*perc_dist_error
+        self.score = (self.size/height)*300 + self.percDistBase*100 - (10*y_error)/height - ang_error*10 - 100*perc_dist_error
         return self.score
 
     def status(self):

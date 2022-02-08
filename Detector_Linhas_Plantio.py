@@ -505,7 +505,7 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
         lineThickness = 8
     elif min(output_shape1) < 600:  #480p
         avgParameters = [(-1, 800), (1, -800)]    
-        textThickness = 2; fontScale = 0.6; origin = (20,20); interval = 20
+        textThickness = 2; fontScale = 0.7; origin = (20,20); interval = 25
         lineThickness = 10
     else:                           #720p
         avgParameters = [(-1, 2000), (1, -2000)]    
@@ -595,6 +595,12 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
                 avg_coords_right_line[2] -= approx
                 roadWidth = int(avg_coords_right_line[2] - avg_coords_left_line[2])
                 x_center = int(avg_coords_left_line[2] + roadWidth/2)
+
+                if x_center < 0:
+                    x_center = 0
+                elif x_center > width:
+                    x_center = width
+
                 # if len(road_sizes) > n_avg_frames:
                 #     road_sizes.pop(0)
                 # road_sizes.append(roadWidth)
@@ -609,6 +615,8 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
                 # avgRoadSize = int(np.average(road_sizes))
 
                 avgRoadSize = roadWidth
+                avgXCenter = x_center
+
                 avg_left_Line = Line(avg_coords_left_line, x_center, avgParameters, avgRoadSize, frame)
                 avg_right_Line = Line(avg_coords_right_line, x_center, avgParameters, avgRoadSize, frame)
                 avgFinalLines = [avg_left_Line, avg_right_Line]
@@ -655,7 +663,6 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
 
         # Draw x center point
 
-        avgXCenter = x_center
 
         y_center = int(0.95 * frame.shape[0])
         finalImg = cv.circle(finalImg, 
@@ -678,10 +685,10 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
                             text = f"Road Size: {avgRoadSize:.0f}px", 
                             org = (origin[0],origin[1]+2*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
         Final_img = cv.putText(img = img_resize,
-                            text = f"Video: {video_path[:-4]}", 
+                            text = f"Proc: {procRate:.1f} fps",
                             org = (origin[0],origin[1]+3*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
         Final_img = cv.putText(img = img_resize,
-                            text = f"Proc: {procRate:.1f} fps", 
+                            text = f"Video: {video_path[:-4]}", 
                             org = (origin[0],origin[1]+4*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
     
         cv.imshow("Final Image", Final_img)
@@ -698,8 +705,8 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
 # 480p: 2.25
 # 360p: 3
 # 270p: 4
-resizing_factor = 3 # Video reducing factor
-proc_ratio = 6  #Number of frames to be analysed per second (max 30)
+resizing_factor = 1.5 # Video reducing factor
+proc_ratio = 30  #Number of frames to be analysed per second (max 30)
 
 fourcc = cv.VideoWriter_fourcc(*'mp4v')
 folder_path = "C:/Users/zabfw3/Documents/Faculdade/TG/TG/Videos_Castanho/Milho"  # Folder where the source videos are located

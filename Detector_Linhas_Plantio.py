@@ -7,6 +7,7 @@ from Line import Line
 import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
+from PIL import Image, ImageDraw, ImageFont
 
 warnings.simplefilter('ignore', np.RankWarning)
 
@@ -490,26 +491,24 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
     '''
     
     frame_cout = 0
-    avg_lines_coords = np.zeros((2,4))
     all_left_lines = []
     all_pars_left_lines = []
     all_right_lines = []
     all_pars_right_lines = []
-    all_x_centers_points = []
     x_seg = 0
     avgFinalLines = []
     avgXCenter = 0
     if min(output_shape1) < 400: #360p
         avgParameters = [(-1, 400), (1, -400)]   
-        textThickness = 1; fontScale = 0.5; origin = (10,20) ; interval = 20
+        fontSize = 16; origin = (10,20) 
         lineThickness = 8
     elif min(output_shape1) < 600:  #480p
         avgParameters = [(-1, 800), (1, -800)]    
-        textThickness = 2; fontScale = 0.7; origin = (20,20); interval = 25
+        fontSize = 21; origin = (20,20)
         lineThickness = 10
     else:                           #720p
         avgParameters = [(-1, 2000), (1, -2000)]    
-        textThickness = 2; fontScale = 1; origin = (20,40); interval = 40
+        fontSize = 32; origin = (20,20)
         lineThickness = 12
 
     road_sizes = []
@@ -518,6 +517,7 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
     roadLimits = [0]
     startVideoSecond = None
     procRate = 0
+    all_proc_rates = []
     while(vid.isOpened()):
         (sucess, frame) = vid.read()
         if not sucess:
@@ -533,6 +533,7 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
             if startVideoSecond is not None:
                 timeDelta = datetime.now() - startVideoSecond
                 procRate = 30/(timeDelta.seconds + timeDelta.microseconds/1000000)
+                all_proc_rates.append(procRate)
             startVideoSecond = datetime.now()
         if frame_cout % int(30/proc_ratio) == 0:
             if len(road_sizes) == 0:
@@ -601,18 +602,6 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
                 elif x_center > width:
                     x_center = width
 
-                # if len(road_sizes) > n_avg_frames:
-                #     road_sizes.pop(0)
-                # road_sizes.append(roadWidth)
-                # if len(all_x_centers_points) > 10:
-                #     all_x_centers_points.pop(0)
-                # all_x_centers_points.append(x_center)
-                # avgXCenter = int(np.mean(all_x_centers_points))
-                # if avgXCenter < 0:
-                #     avgXCenter = 0
-                # elif avgXCenter > width:
-                #     avgXCenter = width
-                # avgRoadSize = int(np.average(road_sizes))
 
                 avgRoadSize = roadWidth
                 avgXCenter = x_center
@@ -674,29 +663,32 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
         FinalImages = [finalImg, imgConsideredLines, img_canny, img_segmented, img_blur, detailedSeg]
 
         final_panel = build_panel(FinalImages, gap = int(0.015*width))
+
         img_resize = cv.resize(final_panel, dsize=output_shape1)
-        Final_img = cv.putText(img = img_resize,
-                           text = f"Lines: {n_detected_lines:2d} - X center: {avgXCenter:.0f}", 
-                           org = origin, fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
-        Final_img = cv.putText(img = img_resize,
-                            text = f"Angs: {angDegreeLeft:.1f}/{angDegreeRight:.1f}", 
-                            org = (origin[0],origin[1]+interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
-        Final_img = cv.putText(img = img_resize,
-                            text = f"Road Size: {avgRoadSize:.0f}px", 
-                            org = (origin[0],origin[1]+2*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
-        Final_img = cv.putText(img = img_resize,
-                            text = f"Proc: {procRate:.1f} fps",
-                            org = (origin[0],origin[1]+3*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
-        Final_img = cv.putText(img = img_resize,
-                            text = f"Video: {video_path[:-4]}", 
-                            org = (origin[0],origin[1]+4*interval), fontFace = cv.FONT_HERSHEY_SIMPLEX,fontScale = fontScale, color = (255,255,255), thickness = textThickness, lineType = cv.FILLED)
-    
+
+        font = ImageFont.truetype(f'{os.getcwd()}/Fonts/arial.TTF', fontSize)
+        img_pil = Image.fromarray(img_resize)
+        draw = ImageDraw.Draw(img_pil)
+
+        draw.text(xy = origin, 
+                text = f"Lines: {n_detected_lines:2d} - X center: {avgXCenter:.0f}" +
+                    f"\nAngs: {angDegreeLeft:.1f}°/{angDegreeRight:.1f}°" +
+                    f"\nRoad Size: {avgRoadSize:.0f}px" +
+                    f"\nProc: {procRate:.1f} fps" +
+                    f"\nVideo: {video_path[:-4]}",
+                    font = font, 
+                    color = (255,255,255))
+
+        
+        Final_img = np.array(img_pil)
+        
         cv.imshow("Final Image", Final_img)
+        cv.imwrite("Final_Image.png", Final_img)
         out1.write(Final_img)
 
         frame_cout += 1
 
-        
+    print(f"Avg proc rate: {np.average(all_proc_rates)}")
     cv.destroyAllWindows()
     vid.release()
     return
@@ -706,16 +698,19 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
 # 360p: 3
 # 270p: 4
 resizing_factor = 1.5 # Video reducing factor
-proc_ratio = 30  #Number of frames to be analysed per second (max 30)
+proc_ratio = 6  #Number of frames to be analysed per second (max 30)
 
 fourcc = cv.VideoWriter_fourcc(*'mp4v')
-folder_path = "C:/Users/zabfw3/Documents/Faculdade/TG/TG/Videos_Castanho/Milho"  # Folder where the source videos are located
-folder = folder_path.split("/")[-1]
+
+global folder_path
+folder_path = os.getcwd().rsplit('\\', maxsplit=1)[0]
+videos_folder_path = f"{folder_path}/Source_videos"  # Folder where the source videos are located
+folder = videos_folder_path.split("/")[-1]
 out1 = None
-for video_path in listdir(folder_path):
-    if not os.path.isfile(f"{folder_path}/{video_path}"):
+for video_path in listdir(videos_folder_path):
+    if not os.path.isfile(f"{videos_folder_path}/{video_path}"):
         continue
-    vid = cv.VideoCapture(f"{folder_path}/{video_path}")
+    vid = cv.VideoCapture(f"{videos_folder_path}/{video_path}")
 
     if out1 == None:
         frame = vid.read()[1]
@@ -724,7 +719,7 @@ for video_path in listdir(folder_path):
        
         date_start = datetime.now()
         time_stamp = date_start.strftime('%d-%m-%y - %H-%M')
-        path = "C:/Users/zabfw3/Documents/Faculdade/TG/generated_videos"
+        path = f"{folder_path}/generated_videos"
         if not os.path.exists(path):
             os.mkdir(path)
         out1 = cv.VideoWriter(f'{path}/Final_panel ({time_stamp}) ({folder}) ({min(output_shape1)}p) ({proc_ratio}fps).mp4',fourcc, 30, frameSize=output_shape1)

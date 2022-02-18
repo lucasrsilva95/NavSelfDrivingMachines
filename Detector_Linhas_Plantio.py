@@ -697,7 +697,7 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
 # 480p: 2.25
 # 360p: 3
 # 270p: 4
-resizing_factor = 1.5 # Video reducing factor
+resize_factor = 1.5 # Video reducing factor
 proc_ratio = 6  #Number of frames to be analysed per second (max 30)
 
 fourcc = cv.VideoWriter_fourcc(*'mp4v')
@@ -707,14 +707,15 @@ folder_path = "C:/Users/zabfw3/TG"
 videos_folder_path = f"{folder_path}/Source_videos"  # Folder where the source videos are located
 folder_name = videos_folder_path.split("/")[-1]
 out1 = None
+total_frames = 0
 for video_path in listdir(videos_folder_path):
     if not os.path.isfile(f"{videos_folder_path}/{video_path}"):
         continue
     vid = cv.VideoCapture(f"{videos_folder_path}/{video_path}")
-
+    total_frames += int(vid.get(cv.CAP_PROP_FRAME_COUNT))
     if out1 == None:
         frame = vid.read()[1]
-        output_shape1 = (int(frame.shape[1]/resizing_factor), int(frame.shape[0]//resizing_factor))
+        output_shape1 = (int(frame.shape[1]/resize_factor), int(frame.shape[0]//resize_factor))
         output_shape1 = (max(output_shape1), min(output_shape1))
        
         date_start = datetime.now()
@@ -722,17 +723,17 @@ for video_path in listdir(videos_folder_path):
         path = f"{folder_path}/generated_videos"
         if not os.path.exists(path):
             os.mkdir(path)
-        out1 = cv.VideoWriter(f'{path}/Final_panel ({time_stamp}) ({folder_name}) ({min(output_shape1)}p) ({proc_ratio}fps).mp4',fourcc, 30, frameSize=output_shape1)
+        out1 = cv.VideoWriter(f'temp.mp4',fourcc, 30, frameSize=output_shape1)
 
     print(f"New Video: {video_path}")
-    detectRoadLimits(vid, out1, output_shape1, resizing_factor, video_path, proc_ratio, n_avg_frames=int(1.7*proc_ratio))
+    detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_ratio, n_avg_frames=int(1.7*proc_ratio))
 
 out1.release()
 
 date_end = datetime.now()
 totalTime = date_end - date_start
 newFileName = f"{path}/Final_panel ({time_stamp}) ({folder_name}) ({int(1080/resize_factor)}p) ({proc_ratio}fps) - Tempo de execução: {totalTime.seconds//60} min e {totalTime.seconds%60}s - Avg FPS: {total_frames/(totalTime.seconds + totalTime.microseconds/1e6):.2f} fps.mp4"
-os.rename(fileName, newFileName)
+os.rename("temp.mp4", newFileName)
 
 print(f"\nQualidade do vídeo: {int(1080/resize_factor)}p")
 print(f"Taxa de processamento: {proc_ratio} fps")

@@ -8,10 +8,11 @@ import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
 from PIL import Image, ImageDraw, ImageFont
+from imutils.video import FPS, FileVideoStream
 
 warnings.simplefilter('ignore', np.RankWarning)
 
-def generateImages(img, x_seg, colorRange, avgFinalLines, prevRoadLimits):
+def generateImages(img, x_seg, colorRange, prevRoadLimits, pointThicknes):
     '''
     Generate the Blur, Canny and segmented images
     Parameters
@@ -58,7 +59,7 @@ def generateImages(img, x_seg, colorRange, avgFinalLines, prevRoadLimits):
     # img_and = cv.bitwise_and(img, img_segmented)
     # cv.imwrite("img_segmented_parts.png", img_and)
 
-    img_segmented, avgXSeg, detailedSeg, roadLimits = improvedSeg(img_segmented, x_seg, avgFinalLines, prevRoadLimits)
+    img_segmented, avgXSeg, detailedSeg, roadLimits = improvedSeg(img_segmented, x_seg, prevRoadLimits, pointThicknes)
     img_canny = cv.Canny(img_segmented, 25, 35)
     
     return img_canny, img_segmented, img_blur, avgXSeg, detailedSeg, roadLimits
@@ -282,7 +283,7 @@ def calcAvgParameters(left_pars_lines, right_pars_lines, n_lines=30):
     avgParsRigth = np.average(arr_pars_right_lines, axis=0)
     return [avgParsLeft, avgParsRigth]
 
-def improvedSeg(img_seg, x_seg, avgLines, roadLimits, minWidth = 8):
+def improvedSeg(img_seg, x_seg, roadLimits, pointThicknes, minWidth = 8):
     '''
     Improve the segmentation process, only considering the main road.
     Parameters
@@ -390,9 +391,9 @@ def improvedSeg(img_seg, x_seg, avgLines, roadLimits, minWidth = 8):
         newImgSeg[y, x_right:] = [255,255,255]
         newImgSeg[y, x_left:x_right] = [0,0,0]
 
-        detailedSeg = cv.circle(detailedSeg, (new_x_seg, y),0,color=(0,0,255), thickness=5)
-        detailedSeg = cv.circle(detailedSeg, (x_left, y),0,color=(0,255,255), thickness=5)
-        detailedSeg = cv.circle(detailedSeg, (x_right, y),0,color=(255,0,0), thickness=5)
+        detailedSeg = cv.circle(detailedSeg, (new_x_seg, y),0,color=(0,0,255), thickness=pointThicknes)
+        detailedSeg = cv.circle(detailedSeg, (x_left, y),0,color=(0,255,255), thickness=pointThicknes)
+        detailedSeg = cv.circle(detailedSeg, (x_right, y),0,color=(255,0,0), thickness=pointThicknes)
 
         roadLimits[y, :] = [x_left, x_right]
         roadLimits = roadLimits.astype(int)
@@ -476,13 +477,13 @@ def build_panel(FinalImages, gap):
 
     return output_frame
 
-def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_ratio = 30, n_avg_frames = 8):
+def detectRoadLimits(vid, out, output_shape1, resize_factor, video_path, font_path, txtFile, proc_ratio = 30, n_avg_frames = 8):
     '''
     Function that will detect the left and right limits of the road in a video
     Parameters
     ----------
     vid: Video that will be analysed
-    out1: Video output 1
+    out: Video output 1
     output_shape1: Shape of the output video 1
     resize_factor: Factor that will be used when resizing the original frame
     video_path: Video that are being analysed
@@ -490,7 +491,6 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
     n_avg_lines: Number of average lines that will be considered when calculating the final image lines
     '''
     
-    frame_cout = 0
     all_left_lines = []
     all_pars_left_lines = []
     all_right_lines = []
@@ -502,20 +502,25 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
         avgParameters = [(-1, 400), (1, -400)]   
         fontSize = 16; origin = (10,20) 
         lineThickness = 8
+        pointThicknes = 6
     elif min(output_shape1) < 600:  #480p
         avgParameters = [(-1, 800), (1, -800)]    
         fontSize = 21; origin = (20,20)
         lineThickness = 10
+        pointThicknes = 8
     else:                           #720p
         avgParameters = [(-1, 2000), (1, -2000)]    
         fontSize = 32; origin = (20,20)
         lineThickness = 12
+        pointThicknes = 10
 
     road_sizes = []
     colorRange = [([35, 0, 0], [100, 255, 255])]  # Defining the HSV color range that will be used in the color segmentation process
     badLineCout = [0,0]
     roadLimits = [0]
-    startVideoSecond = None
+    current_fps = FPS().start()
+    avg_fps = FPS().start()
+
     procRate = 0
     all_proc_rates = []
     while(vid.isOpened()):
@@ -529,13 +534,15 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
         # approx = 0
         if cv.waitKey(3) & 0xFF == 27 or frame is None:
             break
-        if frame_cout % 30 == 0:
-            if startVideoSecond is not None:
-                timeDelta = datetime.now() - startVideoSecond
-                procRate = 30/(timeDelta.seconds + timeDelta.microseconds/1000000)
-                all_proc_rates.append(procRate)
-            startVideoSecond = datetime.now()
-        if frame_cout % int(30/proc_ratio) == 0:
+
+        if current_fps._numFrames % int(30/proc_ratio) == 0:
+
+            current_fps.stop()
+            procRate = current_fps.fps()
+            current_fps = FPS().start()
+            # procRate = 30/(timeDelta.seconds + timeDelta.microseconds/1000000)
+            # print(f"proc/delt Man: {procRate}/{timeDelta.seconds + timeDelta.microseconds/1e6} - proc/delt Auto: {pRate}/{dtime}")
+            all_proc_rates.append(procRate)
             if len(road_sizes) == 0:
                 avgRoadSize = 0
             else:
@@ -546,7 +553,7 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
             if len(roadLimits) == 1:
                 roadLimits = np.zeros((frame.shape[0], 2))
             # Generate images
-            img_canny, img_segmented, img_blur, x_seg, detailedSeg, roadLimits = generateImages(frame, x_seg, colorRange, avgFinalLines, roadLimits)
+            img_canny, img_segmented, img_blur, x_seg, detailedSeg, roadLimits = generateImages(frame, x_seg, colorRange, roadLimits, pointThicknes)
 
             lines = cv.HoughLinesP(img_canny, 
                                     2, 
@@ -666,7 +673,7 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
 
         img_resize = cv.resize(final_panel, dsize=output_shape1)
 
-        font = ImageFont.truetype('C:/Users/zabfw3/TG/NavSelfDrivingMachines/Fonts/arial.TTF', fontSize)
+        font = ImageFont.truetype(font_path, fontSize)
         img_pil = Image.fromarray(img_resize)
         draw = ImageDraw.Draw(img_pil)
 
@@ -683,60 +690,84 @@ def detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_r
         Final_img = np.array(img_pil)
         
         cv.imshow("Final Image", Final_img)
-        cv.imwrite("Final_Image.png", Final_img)
-        out1.write(Final_img)
+        # cv.imwrite("Final_Image.png", Final_img)
+        out.write(Final_img)
 
-        frame_cout += 1
+        # frame_cout += 1
+        current_fps.update()
+        avg_fps.update()
 
-    print(f"Avg proc rate: {np.average(all_proc_rates)}")
+    avg_fps.stop()
+
+    text_details = (f"\nElapsed time: {avg_fps.elapsed()//3600:02.0f}:{(avg_fps.elapsed()%3600)//60:02.0f}:{avg_fps.elapsed()%60:02.0f}" +
+                    f"\nAverage processing speed: {np.average(all_proc_rates):.1f} fps\n\n")
+    
+    print(text_details)
+    txtFile.write(text_details)
+    
     cv.destroyAllWindows()
     vid.release()
     return
 
-# 720p: 1.5
-# 480p: 2.25
-# 360p: 3
-# 270p: 4
-resize_factor = 1.5 # Video reducing factor
-proc_ratio = 6  #Number of frames to be analysed per second (max 30)
+if __name__ == '__main__':
+    # 720p: 1.5
+    # 480p: 2.25
+    # 360p: 3
+    # 270p: 4
+    resize_factor = 1.5 # Video reducing factor
+    # proc_ratio = 6  #Number of frames to be analysed per second (max 30)
+    font_path = "C:/Users/zabfw3/TG/NavSelfDrivingMachines/Fonts/arial.TTF"
+    # global folder_path
+    folder_path = "C:/Users/zabfw3/TG"
+    videos_folder_path = f"{folder_path}/Source_videos"  # Folder where the source videos are located
+    folder_name = videos_folder_path.split("/")[-1]
+    if not os.path.exists(f"{folder_path}/generated_videos"):
+        os.mkdir(f"{folder_path}/generated_videos")
 
-fourcc = cv.VideoWriter_fourcc(*'mp4v')
-
-global folder_path
-folder_path = "C:/Users/zabfw3/TG"
-videos_folder_path = f"{folder_path}/Source_videos"  # Folder where the source videos are located
-folder_name = videos_folder_path.split("/")[-1]
-out1 = None
-total_frames = 0
-for video_path in listdir(videos_folder_path):
-    if not os.path.isfile(f"{videos_folder_path}/{video_path}"):
-        continue
-    vid = cv.VideoCapture(f"{videos_folder_path}/{video_path}")
-    total_frames += int(vid.get(cv.CAP_PROP_FRAME_COUNT))
-    if out1 == None:
-        frame = vid.read()[1]
-        output_shape1 = (int(frame.shape[1]/resize_factor), int(frame.shape[0]//resize_factor))
-        output_shape1 = (max(output_shape1), min(output_shape1))
-       
+    for proc_ratio in [1, 3]:
         date_start = datetime.now()
         time_stamp = date_start.strftime('%d-%m-%y - %H-%M')
-        path = f"{folder_path}/generated_videos"
-        if not os.path.exists(path):
-            os.mkdir(path)
-        out1 = cv.VideoWriter(f'temp.mp4',fourcc, 30, frameSize=output_shape1)
+        output_path = f"{folder_path}/generated_videos/Video ({time_stamp}) ({int(1080/resize_factor)}p) ({proc_ratio}fps)"
+        os.mkdir(output_path)
+        txtFile = open(f"{output_path}/Details final video.txt", "w+")
+        fourcc = cv.VideoWriter_fourcc(*'mp4v')
 
-    print(f"New Video: {video_path}")
-    detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, proc_ratio, n_avg_frames=int(1.7*proc_ratio))
+        
+        out1 = None
+        total_frames = 0
+        for video_path in listdir(videos_folder_path):
+            if not os.path.isfile(f"{videos_folder_path}/{video_path}"):
+                continue
+            vid = cv.VideoCapture(f"{videos_folder_path}/{video_path}")
+            total_frames += int(vid.get(cv.CAP_PROP_FRAME_COUNT))
+            if out1 == None:
+                frame = vid.read()[1]
+                output_shape1 = (int(frame.shape[1]/resize_factor), int(frame.shape[0]//resize_factor))
+                output_shape1 = (max(output_shape1), min(output_shape1))
+            
+                
+                
+                fileName = f'{output_path}/Final video ({int(1080/resize_factor)}p) ({proc_ratio}fps).mp4'
+                out1 = cv.VideoWriter(fileName, fourcc, 30, frameSize=output_shape1)
 
-out1.release()
+            print(f"Video: {video_path}")
+            txtFile.write(f"Video: {video_path}")
+            detectRoadLimits(vid, out1, output_shape1, resize_factor, video_path, font_path, txtFile, proc_ratio, n_avg_frames=int(1.7*proc_ratio))
+            
+        out1.release()
 
-date_end = datetime.now()
-totalTime = date_end - date_start
-newFileName = f"{path}/Final_panel ({time_stamp}) ({folder_name}) ({int(1080/resize_factor)}p) ({proc_ratio}fps) - Tempo de execução: {totalTime.seconds//60} min e {totalTime.seconds%60}s - Avg FPS: {total_frames/(totalTime.seconds + totalTime.microseconds/1e6):.2f} fps.mp4"
-os.rename("temp.mp4", newFileName)
+        date_end = datetime.now()
+        totalTime = date_end - date_start
+        # newFileName = f"{output_path}/Final_video ({time_stamp}) ({int(1080/resize_factor)}p) ({proc_ratio}fps) - Tempo de execução {totalTime.seconds//60} min e {totalTime.seconds%60}s - Avg FPS {total_frames/(totalTime.seconds + totalTime.microseconds/1e6):.2f}fps.mp4"
+        # os.rename(fileName, newFileName)
 
-print(f"\nQualidade do vídeo: {int(1080/resize_factor)}p")
-print(f"Taxa de processamento: {proc_ratio} fps")
-print(f"Tempo de execução: {totalTime.seconds//60} min e {totalTime.seconds%60}s")
-print(f"Avg FPS: {total_frames/(totalTime.seconds + totalTime.microseconds/1e6):.2f} fps")
-print(f"Tempo de execução: {totalTime.seconds//60} min e {totalTime.seconds%60}s")
+        text_final_detail = (f"\n====================== FINAL RESULT ======================" +
+                            f"\nVideo quality: {int(1080/resize_factor)}p" +
+                            f"\nProcessing rate: {proc_ratio} fps" +
+                            f"\nExecution time: {totalTime.seconds//3600:02.0f}:{(totalTime.seconds%3600)//60:02.0f}:{totalTime.seconds%60:02.0f}" +
+                            f"\nAverage processing speed: {total_frames/(totalTime.seconds + totalTime.microseconds/1e6):.1f} fps\n\n")
+
+        print(text_final_detail)
+        txtFile.write(text_final_detail)
+        txtFile.close()
+

@@ -13,13 +13,17 @@ from imutils.video import FPS, FileVideoStream
 
 warnings.simplefilter('ignore', np.RankWarning)
 
-def generateImages(img, x_seg, colorRange, prevRoadLimits, pointThicknes, segMainRoad=True):
+def generateImages(img, x_seg, colorRange, prevRoadLimits, pointThickness, segMainRoad=True):
     '''
     Generate the Blur, Canny and segmented images
     Parameters
     ----------
     img: Source frame
+    x_seg: 
     colorRange: Color range that will be used in the segmentation process
+    prevRoadLimits: Road limits detected in the last frame
+    pointThickness: Define thickness of the points drawed by the algorithm
+    segMainRoad: Define if the algorithm will segment the main road in the image
     '''
     height, width, _ = img.shape
     kernel = int(0.13*width)
@@ -42,16 +46,17 @@ def generateImages(img, x_seg, colorRange, prevRoadLimits, pointThicknes, segMai
     img_segmented[mascara == 0] = 0
     img_segmented[mascara == 255] = 255
     img_canny = cv.Canny(img_segmented, 25, 35)
-    # cv.imshow('canny all', img_canny)
-    lines = cv.HoughLinesP(img_canny, 
-                                2, 
-                                np.pi / 180, 
-                                50, 
-                                np.array([]), 
-                                minLineLength = int(height/18),
-                                maxLineGap = int(height/6))
 
-    imgAllLines = draw_lines(img, lines, color=(0,255,255))
+    # cv.imshow('canny all', img_canny)
+    # lines = cv.HoughLinesP(img_canny, 
+    #                             2, 
+    #                             np.pi / 180, 
+    #                             50, 
+    #                             np.array([]), 
+    #                             minLineLength = int(height/18),
+    #                             maxLineGap = int(height/6))
+
+    # imgAllLines = draw_lines(img, lines, color=(0,255,255))
     # cv.imshow('img_seg_verde_all_lines', imgAllLines)
     # cv.imwrite("img_seg_verde_all_lines.png", imgAllLines)
 
@@ -60,7 +65,7 @@ def generateImages(img, x_seg, colorRange, prevRoadLimits, pointThicknes, segMai
     # img_and = cv.bitwise_and(img, img_segmented)
     # cv.imwrite("img_segmented_parts.png", img_and)
     if segMainRoad:
-        img_segmented, avgXSeg, detailedSeg, roadLimits = improvedSeg(img_segmented, x_seg, prevRoadLimits, pointThicknes)
+        img_segmented, avgXSeg, detailedSeg, roadLimits = improvedSeg(img_segmented, x_seg, prevRoadLimits, pointThickness)
     else:
         avgXSeg, detailedSeg, roadLimits = (x_seg, img_segmented, prevRoadLimits)
     img_canny = cv.Canny(img_segmented, 25, 35)
@@ -117,6 +122,17 @@ def draw_lines(img, lines, color=(0,255,255), average_lines=False):
     return imgWithLines
 
 def extrapolateLine(modelLine, avgPars, imgWidth, approx):
+    '''
+    Function created to define the coordenates of the lines that couldn't be detected. This is done by using the average parameters and the point at the frame limit
+
+    Parameters
+    ----------
+    modelLine: Line that will be used as a model for the other detected lines.
+    AvgPars: Array Like
+            Average line parameters
+    imgWidth: Frame width
+    approx: Approximation value that the algorithm uses.
+    '''
     (y1,y2) = (modelLine.projCoords[1], modelLine.projCoords[3])
     if modelLine.lineType == "Left":
         x1 = imgWidth + approx
@@ -128,7 +144,7 @@ def extrapolateLine(modelLine, avgPars, imgWidth, approx):
 
     return (x1,y1,x2,y2)
 
-def calc_average_lines(img, lines, avgXCenter, avgRoadSize, avgParameters, badLineCout, lineThickness, approx):
+def calc_average_lines(img, lines, avgXCenter, avgRoadSize, avgParameters, badLineCount, lineThickness, approx):
     '''
     Calculate the average lines from a array of lines.
     Parameters
@@ -140,6 +156,8 @@ def calc_average_lines(img, lines, avgXCenter, avgRoadSize, avgParameters, badLi
     avgRoadSize: Average size of the road
     avgParameters: Array Like
                     Average line parameters. [[aLeft, bLeft], [aRight, bRight]]
+    badLineCount: Variable created to count the number of bad lines detected.
+    lineThickness: Thickness of the line that wiil be drawn by the algorithm.
     aprox: Value that will be used to approximate the coordenates of the final lines to the road center.
     '''
     (height, width, _)  = img.shape
@@ -172,13 +190,12 @@ def calc_average_lines(img, lines, avgXCenter, avgRoadSize, avgParameters, badLi
     imgConsLines = img.copy()
     final_lines = []
     if len(leftLines) > 0:
-        badLineCout[0] = 0
+        badLineCount[0] = 0
         sortedLeftLines = sorted(leftLines, key = lambda line:line.score, reverse=True)
 
         for line in sortedLeftLines[:-3]:
             demoImg = line.draw(img=demoImg, thickness = lineThickness)
         for line in sortedLeftLines[-3:]:
-            # demoImg = line.draw(img=demoImg, color=(0,0,255))
             demoImg = line.draw(img=demoImg, thickness = lineThickness)
         
 
@@ -191,7 +208,7 @@ def calc_average_lines(img, lines, avgXCenter, avgRoadSize, avgParameters, badLi
     
 
     if len(rightLines) > 0:
-        badLineCout[1] = 0
+        badLineCount[1] = 0
         sortedRightLines = sorted(rightLines, key = lambda line:line.score, reverse=True)
 
 
@@ -211,31 +228,20 @@ def calc_average_lines(img, lines, avgXCenter, avgRoadSize, avgParameters, badLi
         final_lines.append(FinalRightLine)
 
         if len(leftLines) == 0:
-            badLineCout[0] += 1
-            if badLineCout[0] > 2:
+            badLineCount[0] += 1
+            if badLineCount[0] > 2:
                 artLeftLine = extrapolateLine(FinalRightLine, avgParameters, width, approx)
                 FinalLeftLine = Line(artLeftLine, avgXCenter, avgParameters, avgRoadSize, img)
                 final_lines.insert(0, FinalLeftLine)
     elif len(leftLines) > 0:
-        badLineCout[1] += 1
-        if badLineCout[1] > 2:
+        badLineCount[1] += 1
+        if badLineCount[1] > 2:
             maxRightLine = extrapolateLine(FinalLeftLine, avgParameters, width, approx)
             FinalRightLine = Line(maxRightLine, avgXCenter, avgParameters, avgRoadSize, img)
             final_lines.append(FinalRightLine)
     
 
-
-
-    # final_lines = np.array(final_lines)
-    # imgAvgLines = img.copy()
-
-    # imgAvgLines = final_lines[0].drawProjLine(imgAvgLines, thickness=7)
-    # imgAvgLines = final_lines[1].drawProjLine(imgAvgLines, thickness=7)
-
-    # cv.imshow('Average Lines', imgAvgLines)
-    # cv.imwrite('img_average_Lines.png', imgAvgLines)
-
-    return final_lines, imgConsLines, n_detected_lines, badLineCout
+    return final_lines, imgConsLines, n_detected_lines, badLineCount
 
 def calcAvgRoadSize(height, left_lines, right_lines, n_lines=20):
     '''
@@ -292,9 +298,12 @@ def improvedSeg(img_seg, x_seg, roadLimits, pointThicknes, minWidth = 8):
     Parameters
     ----------
     img_seg: Color segmented  image
+    x_seg: X coordenate of the average center
+    roadLimits: Road limits of the previous frame
+    pointThickness: Thickness of the points that will be drawed by the algorithm
     minWidth: Minimum width that will be considered when detecting a road limit
     '''
-    imgNewSeg = img_seg.copy()
+    
     height, width, _ = img_seg.shape
     minWidth = int(0.02*width)
     distsLeftRight = np.zeros(img_seg.shape[0])
@@ -413,11 +422,7 @@ def build_panel(FinalImages, gap):
     ----------
     FinalImages: Array Like
                 Array containing all the images
-    n_detected_lines: Number of not horizontal lines detected
-    avgXCenter: Average x center of the road
-    road_size: Calculated road size
-    video_path: Vídeo that are being analysed
-    angsDegree: Angle of the average line (in degree)
+    gap: Gap the will be put between frames in the output panel
     '''
     
     [Final_img, imgConsideredLines, img_canny, img_segmented, img_blur, imgDetailedSeg] = FinalImages
@@ -763,12 +768,12 @@ if __name__ == '__main__':
     # 180p: 6
     resize_factor = 6 # Video reducing factor
     output_resize_factor = 2
-    showResult = False
+    showResult = True
 
     # proc_ratio = 6  #Number of frames to be analysed per second (max 30)
-    font_path = "C:/Users/zabfw3/TG/NavSelfDrivingMachines/Fonts/arial.TTF"
+    font_path = "C:/Users/lrsilva/TG/NavSelfDrivingMachines/Fonts/arial.TTF"
     # global folder_path
-    folder_path = "C:/Users/zabfw3/TG"
+    folder_path = "C:/Users/lrsilva/TG"
     videos_folder_path = f"{folder_path}/Source_videos"  # Folder where the source videos are located
     folder_name = videos_folder_path.split("/")[-1]
     if not os.path.exists(f"{folder_path}/generated_videos"):
